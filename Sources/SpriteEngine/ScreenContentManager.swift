@@ -66,16 +66,18 @@ final class ScreenContentManager {
     // MARK: - Content Selection
 
     /// Pick procedurally generated textures for all 3 screens.
-    /// Center gets a detailed texture, sides get subtle dim textures.
+    /// Each screen gets a different content type to avoid repetition.
     private func pickNewContent(for screenNodes: [ScreenNode]) {
         guard screenNodes.count == 3 else { return }
         let gen = ScreenTextureGenerator.shared
 
-        // Center screen (index 1): detailed content
-        screenNodes[1].showTexture(gen.centerTexture(for: currentCategory))
+        // Center screen (index 1)
+        let centerTex = gen.centerTexture(for: currentCategory)
+        screenNodes[1].showTexture(centerTex)
 
-        // Side screens (index 0, 2): subtle dim content
-        screenNodes[0].showTexture(gen.sideTexture(for: currentCategory))
+        // Side screens (index 0, 2): same content types, different picks
+        let leftTex = gen.sideTexture(for: currentCategory)
+        screenNodes[0].showTexture(leftTex)
         screenNodes[2].showTexture(gen.sideTexture(for: currentCategory))
     }
 
