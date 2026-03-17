@@ -4,7 +4,7 @@
 
 **Goal:** Replace file-based session polling with a local HTTP hook server that receives Claude Code events in real-time and enables bidirectional permission handling from the pixel office UI.
 
-**Architecture:** Local TCP server (Network.framework) listens on port 49152. Claude Code hooks POST JSON events to it. For permission requests, the HTTP connection is held open while the user approves/denies from an interactive speech bubble in the SpriteKit scene. This transforms AgentPong from a read-only visualization into a control surface.
+**Architecture:** Local TCP server (Network.framework) listens on **127.0.0.1:49152** (loopback only). Claude Code hooks receive JSON on stdin; the hook-sender.sh reads it and POSTs it directly to the server via `curl -d @-` (no string interpolation, no injection risk). For permission requests (PreToolUse with permission_mode="ask"), the HTTP connection is held open while the user approves/denies from an interactive speech bubble in the SpriteKit scene. This transforms AgentPong from a read-only visualization into a control surface.
 
 **Tech Stack:** Swift, Network.framework (NWListener), SpriteKit, existing AgentPong modules
 
@@ -64,58 +64,69 @@ import XCTest
 
 final class HookEventTests: XCTestCase {
     func testDecodeSessionStartEvent() throws {
+        // Claude Code sends hook_event_name (not "event") and session_id via stdin JSON
         let json = """
         {
-            "event": "SessionStart",
+            "hook_event_name": "SessionStart",
             "session_id": "abc-123",
             "cwd": "/Users/dev/project",
-            "timestamp": "2026-03-17T10:00:00Z"
+            "transcript_path": "/tmp/transcript.jsonl"
         }
         """.data(using: .utf8)!
 
         let event = try JSONDecoder.hookDecoder.decode(HookEvent.self, from: json)
-        XCTAssertEqual(event.event, "SessionStart")
+        XCTAssertEqual(event.hookEventName, "SessionStart")
         XCTAssertEqual(event.sessionId, "abc-123")
         XCTAssertEqual(event.cwd, "/Users/dev/project")
     }
 
-    func testDecodePermissionRequestEvent() throws {
+    func testDecodePreToolUseEvent() throws {
+        // tool_input is a JSON object (not a string) in the real API
         let json = """
         {
-            "event": "PreToolUse",
+            "hook_event_name": "PreToolUse",
             "session_id": "abc-123",
             "tool_name": "Bash",
-            "tool_input": "rm -rf /tmp/test",
-            "requires_permission": true
+            "tool_input": {"command": "rm -rf /tmp/test"},
+            "permission_mode": "ask"
         }
         """.data(using: .utf8)!
 
         let event = try JSONDecoder.hookDecoder.decode(HookEvent.self, from: json)
-        XCTAssertEqual(event.event, "PreToolUse")
+        XCTAssertEqual(event.hookEventName, "PreToolUse")
         XCTAssertEqual(event.toolName, "Bash")
-        XCTAssertEqual(event.toolInput, "rm -rf /tmp/test")
-        XCTAssertTrue(event.requiresPermission ?? false)
+        // tool_input is decoded as [String: AnyCodable] dictionary
+        XCTAssertEqual(event.toolInput?["command"] as? String, "rm -rf /tmp/test")
     }
 
     func testDecodeStopEvent() throws {
         let json = """
         {
-            "event": "Stop",
+            "hook_event_name": "Stop",
             "session_id": "abc-123",
-            "stop_reason": "end_turn"
+            "reason": "end_turn",
+            "transcript_path": "/tmp/transcript.jsonl"
         }
         """.data(using: .utf8)!
 
         let event = try JSONDecoder.hookDecoder.decode(HookEvent.self, from: json)
-        XCTAssertEqual(event.event, "Stop")
-        XCTAssertEqual(event.stopReason, "end_turn")
+        XCTAssertEqual(event.hookEventName, "Stop")
+        XCTAssertEqual(event.reason, "end_turn")
     }
 
-    func testEncodePermissionResponse() throws {
-        let response = PermissionResponse(allow: true, message: nil)
-        let data = try JSONEncoder().encode(response)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(dict["allow"] as? Bool, true)
+    func testDecodePostToolUseEvent() throws {
+        let json = """
+        {
+            "hook_event_name": "PostToolUse",
+            "session_id": "abc-123",
+            "tool_name": "Write",
+            "tool_result": "File written successfully"
+        }
+        """.data(using: .utf8)!
+
+        let event = try JSONDecoder.hookDecoder.decode(HookEvent.self, from: json)
+        XCTAssertEqual(event.hookEventName, "PostToolUse")
+        XCTAssertEqual(event.toolResult, "File written successfully")
     }
 }
 ```
@@ -133,41 +144,105 @@ import Foundation
 
 /// Represents a JSON payload from a Claude Code hook.
 ///
-/// Events flow:
-///   Claude Code → hook-sender.sh → POST JSON → HookServer → HookEvent
+/// Claude Code hooks receive a JSON object on stdin with these fields.
+/// The hook-sender.sh reads this from stdin and POSTs it to HookServer.
 ///
-/// For permission events (requires_permission=true), the HTTP connection
-/// is held open until a PermissionResponse is sent back.
+/// Events flow:
+///   Claude Code stdin → hook-sender.sh → POST JSON → HookServer → HookEvent
+///
+/// For PreToolUse events, the hook can respond with a decision JSON
+/// to block the tool use. The HTTP connection is held open while the
+/// user approves/denies from the UI.
+///
+/// > **Note:** The field names below match the actual Claude Code hook API
+/// > (verified against ~/.claude/hooks/ examples and plugin-dev tooling).
+/// > Key differences from earlier assumptions:
+/// > - `hook_event_name` (not `event`)
+/// > - `tool_input` is a JSON object (not a string)
+/// > - `reason` (not `stop_reason`) for Stop events
+/// > - `permission_mode` (not `requires_permission`) indicates permission state
+/// > - No `timestamp` field -- hooks don't include one
 public struct HookEvent: Codable, Sendable {
-    public let event: String           // SessionStart, Stop, PreToolUse, PostToolUse, etc.
+    public let hookEventName: String   // SessionStart, SessionEnd, Stop, PreToolUse, PostToolUse, Notification
     public let sessionId: String
     public var cwd: String?
+    public var transcriptPath: String?
+    public var permissionMode: String? // "ask", "acceptEdits", etc.
     public var toolName: String?       // PreToolUse/PostToolUse
-    public var toolInput: String?      // PreToolUse: the command/file being accessed
-    public var requiresPermission: Bool?
-    public var stopReason: String?     // Stop: end_turn, interrupt, etc.
-    public var timestamp: Date?
+    public var toolInput: [String: AnyCodable]?  // PreToolUse: JSON object (e.g. {"command":"ls"}, {"file_path":"/tmp/x","content":"..."})
+    public var toolResult: String?     // PostToolUse: result text
+    public var reason: String?         // Stop: end_turn, interrupt, etc.
+    public var notificationType: String? // Notification: permission_prompt, idle_prompt, etc.
+    public var userPrompt: String?     // UserPromptSubmit
 
     enum CodingKeys: String, CodingKey {
-        case event
+        case hookEventName = "hook_event_name"
         case sessionId = "session_id"
         case cwd
+        case transcriptPath = "transcript_path"
+        case permissionMode = "permission_mode"
         case toolName = "tool_name"
         case toolInput = "tool_input"
-        case requiresPermission = "requires_permission"
-        case stopReason = "stop_reason"
-        case timestamp
+        case toolResult = "tool_result"
+        case reason
+        case notificationType = "notification_type"
+        case userPrompt = "user_prompt"
+    }
+
+    /// Convenience: is this a PreToolUse event where we should show
+    /// an interactive permission bubble?
+    public var isPermissionEvent: Bool {
+        hookEventName == "PreToolUse" && permissionMode == "ask"
+    }
+
+    /// Convenience: human-readable description of tool_input.
+    public var toolInputDescription: String {
+        guard let input = toolInput else { return "" }
+        // For Bash: show the command
+        if let cmd = input["command"]?.value as? String { return cmd }
+        // For Write/Edit: show the file path
+        if let path = input["file_path"]?.value as? String { return path }
+        // Fallback: show keys
+        return input.keys.joined(separator: ", ")
     }
 }
 
-/// Response sent back for permission requests.
-public struct PermissionResponse: Codable, Sendable {
-    public let allow: Bool
-    public var message: String?
+/// Decision response for PreToolUse hooks.
+/// Output as JSON to stdout. Claude Code reads this to decide
+/// whether to allow or block the tool use.
+///
+/// Exit code also matters:
+///   - exit 0: allow (decision JSON optional)
+///   - exit 2: block (decision JSON required for reason)
+public struct HookDecision: Codable, Sendable {
+    public let decision: String        // "allow" or "block"
+    public var reason: String?         // Shown to Claude when blocked
 
-    public init(allow: Bool, message: String? = nil) {
-        self.allow = allow
-        self.message = message
+    public init(allow: Bool, reason: String? = nil) {
+        self.decision = allow ? "allow" : "block"
+        self.reason = reason
+    }
+}
+
+/// Simple type-erased Codable wrapper for JSON values.
+public struct AnyCodable: Codable, Sendable {
+    public let value: Any
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let s = try? container.decode(String.self) { value = s }
+        else if let i = try? container.decode(Int.self) { value = i }
+        else if let d = try? container.decode(Double.self) { value = d }
+        else if let b = try? container.decode(Bool.self) { value = b }
+        else { value = "" }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let s = value as? String { try container.encode(s) }
+        else if let i = value as? Int { try container.encode(i) }
+        else if let d = value as? Double { try container.encode(d) }
+        else if let b = value as? Bool { try container.encode(b) }
     }
 }
 
@@ -237,7 +312,7 @@ final class HookServerTests: XCTestCase {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = """
-        {"event":"SessionStart","session_id":"test-1","cwd":"/tmp"}
+        {"hook_event_name":"SessionStart","session_id":"test-1","cwd":"/tmp"}
         """.data(using: .utf8)
 
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -245,7 +320,7 @@ final class HookServerTests: XCTestCase {
         XCTAssertEqual(httpResponse.statusCode, 200)
 
         await fulfillment(of: [expectation], timeout: 2)
-        XCTAssertEqual(receivedEvent?.event, "SessionStart")
+        XCTAssertEqual(receivedEvent?.hookEventName, "SessionStart")
         XCTAssertEqual(receivedEvent?.sessionId, "test-1")
 
         server.stop()
@@ -261,7 +336,7 @@ final class HookServerTests: XCTestCase {
             permissionExpectation.fulfill()
             // Simulate user clicking "allow" after a short delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                respond(PermissionResponse(allow: true))
+                respond(HookDecision(allow: true))
             }
         }
 
@@ -269,8 +344,9 @@ final class HookServerTests: XCTestCase {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // permission_mode: "ask" triggers the permission flow
         request.httpBody = """
-        {"event":"PreToolUse","session_id":"test-1","tool_name":"Bash","tool_input":"ls","requires_permission":true}
+        {"hook_event_name":"PreToolUse","session_id":"test-1","tool_name":"Bash","tool_input":{"command":"ls"},"permission_mode":"ask"}
         """.data(using: .utf8)
 
         // This should block until we respond
@@ -278,9 +354,9 @@ final class HookServerTests: XCTestCase {
         let httpResponse = response as! HTTPURLResponse
         XCTAssertEqual(httpResponse.statusCode, 200)
 
-        // Response should contain our permission decision
-        let permResponse = try JSONDecoder().decode(PermissionResponse.self, from: data)
-        XCTAssertTrue(permResponse.allow)
+        // Response should contain our hook decision
+        let decision = try JSONDecoder().decode(HookDecision.self, from: data)
+        XCTAssertEqual(decision.decision, "allow")
 
         await fulfillment(of: [permissionExpectation], timeout: 2)
         server.stop()
@@ -303,18 +379,18 @@ import Network
 /// Local HTTP server that receives Claude Code hook events.
 ///
 /// Architecture:
-///   ┌──────────────┐    POST /hook     ┌────────────┐
-///   │ hook-sender.sh│ ───────────────► │ HookServer  │
-///   │  (curl)       │                  │ port 49152  │
-///   │               │ ◄─────────────── │             │
-///   │  (blocks for  │   JSON response  │ held conn   │
-///   │   permission) │   (allow/deny)   │ for perms   │
-///   └──────────────┘                  └────────────┘
+///   ┌──────────────┐    POST /hook     ┌─────────────────┐
+///   │ hook-sender.sh│ ───────────────► │   HookServer     │
+///   │  stdin→curl   │                  │ 127.0.0.1:49152  │
+///   │               │ ◄─────────────── │   (loopback)     │
+///   │  (blocks for  │  HookDecision    │   held conn      │
+///   │   permission) │  JSON + exitcode │   for perms      │
+///   └──────────────┘                  └─────────────────┘
 ///
 /// For regular events: immediate 200 OK response.
-/// For permission events (requires_permission=true):
+/// For permission events (PreToolUse with permission_mode="ask"):
 ///   connection is held open until onPermissionRequest callback
-///   invokes the respond closure with a PermissionResponse.
+///   invokes the respond closure with a HookDecision.
 public final class HookServer: @unchecked Sendable {
 
     private let port: UInt16
@@ -327,9 +403,9 @@ public final class HookServer: @unchecked Sendable {
     /// Called for every non-permission event.
     public var onEvent: ((HookEvent) -> Void)?
 
-    /// Called for permission events. The closure must be invoked
-    /// with a PermissionResponse to unblock the hook script.
-    public var onPermissionRequest: ((HookEvent, @escaping (PermissionResponse) -> Void) -> Void)?
+    /// Called for permission events (PreToolUse with permission_mode="ask").
+    /// The closure must be invoked with a HookDecision to unblock the hook script.
+    public var onPermissionRequest: ((HookEvent, @escaping (HookDecision) -> Void) -> Void)?
 
     public init(port: UInt16 = 49152) {
         self.port = port
@@ -339,6 +415,13 @@ public final class HookServer: @unchecked Sendable {
         let params = NWParameters.tcp
         let p = port == 0 ? NWEndpoint.Port.any : NWEndpoint.Port(rawValue: port)!
         listener = try NWListener(using: params, on: p)
+
+        // SECURITY: Bind to loopback only. Without this, NWListener
+        // defaults to 0.0.0.0 which exposes the server to the local network.
+        listener?.parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
+            host: .ipv4(.loopback),
+            port: p
+        )
 
         listener?.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -410,12 +493,20 @@ public final class HookServer: @unchecked Sendable {
         }
 
         // Permission request: hold the connection open
-        if event.requiresPermission == true {
+        if event.isPermissionEvent {
             DispatchQueue.main.async { [weak self] in
-                self?.onPermissionRequest?(event) { response in
-                    let responseData = (try? JSONEncoder().encode(response)) ?? Data()
+                self?.onPermissionRequest?(event) { decision in
+                    let responseData = (try? JSONEncoder().encode(decision)) ?? Data()
                     let body = String(data: responseData, encoding: .utf8) ?? "{}"
-                    self?.sendHTTPResponse(connection: connection, status: 200, body: body)
+                    // Exit code 2 = block. We encode this in a header the
+                    // hook-sender.sh reads to set the correct exit code.
+                    let exitCode = decision.decision == "block" ? 2 : 0
+                    self?.sendHTTPResponse(
+                        connection: connection,
+                        status: 200,
+                        body: body,
+                        headers: ["X-Hook-Exit-Code: \(exitCode)"]
+                    )
                 }
             }
             return
@@ -428,13 +519,14 @@ public final class HookServer: @unchecked Sendable {
         sendHTTPResponse(connection: connection, status: 200, body: "{\"ok\":true}")
     }
 
-    private func sendHTTPResponse(connection: NWConnection, status: Int, body: String) {
+    private func sendHTTPResponse(connection: NWConnection, status: Int, body: String, headers: [String] = []) {
         let statusText = status == 200 ? "OK" : "Bad Request"
+        let extraHeaders = headers.isEmpty ? "" : headers.map { "\($0)\r\n" }.joined()
         let response = """
         HTTP/1.1 \(status) \(statusText)\r
         Content-Type: application/json\r
         Content-Length: \(body.utf8.count)\r
-        Connection: close\r
+        \(extraHeaders)Connection: close\r
         \r
         \(body)
         """
@@ -473,49 +565,55 @@ git commit -m "feat: add HTTP hook server with held-connection permission handli
 # hook-sender.sh -- Sends Claude Code hook events to AgentPong's local HTTP server.
 # Installed by `agentpong setup` into ~/.agentpong/hooks/
 #
-# Called by Claude Code with environment variables:
-#   CLAUDE_SESSION_ID, CLAUDE_EVENT, CLAUDE_CWD,
-#   CLAUDE_TOOL_NAME, CLAUDE_TOOL_INPUT, etc.
+# Claude Code hooks receive a JSON object on stdin with fields like:
+#   session_id, hook_event_name, tool_name, tool_input (object), cwd, etc.
 #
-# For permission events (PreToolUse with requires_permission),
-# this script BLOCKS until AgentPong sends back allow/deny.
+# APPROACH: Read the JSON from stdin and forward it directly to the local
+# HTTP server via curl. This avoids JSON injection issues (no string
+# interpolation) and stays compatible with any future field additions.
+#
+# For PreToolUse events with permission_mode="ask", the curl request
+# blocks until AgentPong responds with a HookDecision JSON. The response
+# is printed to stdout so Claude Code can read the decision.
+# The exit code is set based on the X-Hook-Exit-Code header (0=allow, 2=block).
+
+set -euo pipefail
 
 PORT=49152
 URL="http://localhost:${PORT}/hook"
 
-# Build JSON payload from environment
-JSON=$(cat <<ENDJSON
-{
-  "event": "${CLAUDE_EVENT:-unknown}",
-  "session_id": "${CLAUDE_SESSION_ID:-unknown}",
-  "cwd": "${CLAUDE_CWD:-}",
-  "tool_name": "${CLAUDE_TOOL_NAME:-}",
-  "tool_input": "${CLAUDE_TOOL_INPUT:-}",
-  "requires_permission": ${CLAUDE_REQUIRES_PERMISSION:-false},
-  "stop_reason": "${CLAUDE_STOP_REASON:-}",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-ENDJSON
-)
+# Read the full JSON payload from stdin (Claude Code pipes it in)
+INPUT=$(cat)
 
-# Send to AgentPong (timeout 300s for permission events, 5s otherwise)
-if [ "${CLAUDE_REQUIRES_PERMISSION}" = "true" ]; then
+# Determine if this is a permission event that needs to block
+EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
+PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+
+if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
   TIMEOUT=300
 else
   TIMEOUT=5
 fi
 
-RESPONSE=$(curl -s --max-time $TIMEOUT \
+# Forward the stdin JSON directly to AgentPong -- no string interpolation,
+# no injection risk. curl -d @- reads the body from stdin.
+RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" \
   -X POST \
   -H "Content-Type: application/json" \
-  -d "$JSON" \
-  "$URL" 2>/dev/null)
+  -D /dev/stderr \
+  -d @- \
+  "$URL" 2>/tmp/agentpong-hook-headers.$$ || true)
 
-# For permission events, output the response so Claude Code can read it
-if [ "${CLAUDE_REQUIRES_PERMISSION}" = "true" ] && [ -n "$RESPONSE" ]; then
+# For permission events, output the decision JSON and set exit code
+if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ] && [ -n "$RESPONSE" ]; then
   echo "$RESPONSE"
+  # Read exit code from response header
+  EXIT_CODE=$(grep -i "X-Hook-Exit-Code" /tmp/agentpong-hook-headers.$$ 2>/dev/null | tr -dc '0-9' || echo "0")
+  rm -f /tmp/agentpong-hook-headers.$$
+  exit "${EXIT_CODE:-0}"
 fi
 
+rm -f /tmp/agentpong-hook-headers.$$ 2>/dev/null
 exit 0
 ```
 
@@ -560,20 +658,30 @@ private func handleSetup() -> Bool {
     try? FileManager.default.createDirectory(at: hooksDir, withIntermediateDirectories: true)
 
     // Write hook-sender.sh
+    // NOTE: This reads JSON from stdin (Claude Code's hook API) and forwards
+    // it directly to the local HTTP server. No string interpolation = no
+    // JSON injection risk. Uses jq to extract fields for timeout logic.
     let scriptContent = """
     #!/bin/bash
+    set -euo pipefail
     PORT=49152
     URL="http://localhost:${PORT}/hook"
-    JSON='{"event":"'"${CLAUDE_EVENT:-unknown}"'","session_id":"'"${CLAUDE_SESSION_ID:-unknown}"'","cwd":"'"${CLAUDE_CWD:-}"'","tool_name":"'"${CLAUDE_TOOL_NAME:-}"'","tool_input":"'"${CLAUDE_TOOL_INPUT:-}"'","requires_permission":'"${CLAUDE_REQUIRES_PERMISSION:-false}"',"stop_reason":"'"${CLAUDE_STOP_REASON:-}"'","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}'
-    if [ "${CLAUDE_REQUIRES_PERMISSION}" = "true" ]; then
+    INPUT=$(cat)
+    EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
+    PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+    if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
       TIMEOUT=300
     else
       TIMEOUT=5
     fi
-    RESPONSE=$(curl -s --max-time $TIMEOUT -X POST -H "Content-Type: application/json" -d "$JSON" "$URL" 2>/dev/null)
-    if [ "${CLAUDE_REQUIRES_PERMISSION}" = "true" ] && [ -n "$RESPONSE" ]; then
+    RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" -X POST -H "Content-Type: application/json" -D /dev/stderr -d @- "$URL" 2>/tmp/agentpong-hook-headers.$$ || true)
+    if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ] && [ -n "$RESPONSE" ]; then
       echo "$RESPONSE"
+      EXIT_CODE=$(grep -i "X-Hook-Exit-Code" /tmp/agentpong-hook-headers.$$ 2>/dev/null | tr -dc '0-9' || echo "0")
+      rm -f /tmp/agentpong-hook-headers.$$
+      exit "${EXIT_CODE:-0}"
     fi
+    rm -f /tmp/agentpong-hook-headers.$$ 2>/dev/null
     exit 0
     """
 
@@ -691,14 +799,14 @@ private func handleHookEvent(_ event: HookEvent) {
     let writer = SessionWriter()
     try? writer.report(
         sessionId: event.sessionId,
-        event: event.event.lowercased(),
+        event: event.hookEventName.lowercased(),
         cwd: event.cwd
     )
     // Force immediate refresh instead of waiting for next poll
     refreshSessions()
 }
 
-private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (PermissionResponse) -> Void) {
+private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (HookDecision) -> Void) {
     // Find or create the character for this session
     let sessionId = event.sessionId
 
@@ -713,9 +821,9 @@ private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (Per
 
     // Show interactive permission bubble on the character
     if let character = characters[sessionId] {
-        let toolDesc = "\(event.toolName ?? "tool"): \(truncate(event.toolInput ?? "", to: 30))"
+        let toolDesc = "\(event.toolName ?? "tool"): \(truncate(event.toolInputDescription, to: 30))"
         character.showPermissionBubble(text: toolDesc) { [weak self] allowed in
-            respond(PermissionResponse(allow: allowed))
+            respond(HookDecision(allow: allowed))
             self?.pendingPermissions.removeValue(forKey: sessionId)
             character.removeBubble()
         }
@@ -732,7 +840,7 @@ Add the pending permission storage:
 ```swift
 private struct PendingPermission {
     let event: HookEvent
-    let respond: (PermissionResponse) -> Void
+    let respond: (HookDecision) -> Void
 }
 private var pendingPermissions: [String: PendingPermission] = [:]
 ```
@@ -926,7 +1034,7 @@ swift run AgentPong setup
 
 ```bash
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"event":"SessionStart","session_id":"test-1","cwd":"/tmp/test"}' \
+  -d '{"hook_event_name":"SessionStart","session_id":"test-1","cwd":"/tmp/test"}' \
   http://localhost:49152/hook
 ```
 
@@ -937,17 +1045,17 @@ Expected: `{"ok":true}` and a character appears in the office
 ```bash
 # This should block until you click Allow/Deny in the app
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"event":"PreToolUse","session_id":"test-1","tool_name":"Bash","tool_input":"rm -rf /tmp","requires_permission":true}' \
+  -d '{"hook_event_name":"PreToolUse","session_id":"test-1","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp"},"permission_mode":"ask"}' \
   http://localhost:49152/hook
 ```
 
-Expected: Character shows permission bubble. Click Allow → `{"allow":true}`. Click Deny → `{"allow":false}`.
+Expected: Character shows permission bubble. Click Allow -> `{"decision":"allow"}`. Click Deny -> `{"decision":"block","reason":"..."}`.
 
 - [ ] **Step 5: Test session end**
 
 ```bash
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"event":"Stop","session_id":"test-1","stop_reason":"end_turn"}' \
+  -d '{"hook_event_name":"Stop","session_id":"test-1","reason":"end_turn"}' \
   http://localhost:49152/hook
 ```
 
@@ -987,7 +1095,7 @@ git commit -m "feat: complete interactivity system - HTTP hooks + permission han
 |---|---|---|---|---|
 | HookServer port in use | NWListener fails to bind | Yes (port: 0 avoids) | Logs error, falls back to polling | Silent (polling still works) |
 | Hook script can't reach server | curl timeout after 5s | No | Script exits 0 silently | Silent (session updates via polling) |
-| Permission response never sent | curl blocks for 300s then times out | No | Claude Code times out | Claude Code shows timeout |
+| Permission response never sent | curl blocks for 300s then times out | No | Hook exits 0 (allow by default) | Claude Code proceeds |
 | Malformed JSON from hook | JSONDecoder throws | Yes | Returns 400, logs warning | Silent |
 | Multiple simultaneous permissions | Dictionary overwrite | No | Latest permission wins | Previous permission times out |
 
