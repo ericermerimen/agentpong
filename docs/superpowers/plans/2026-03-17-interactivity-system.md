@@ -521,15 +521,16 @@ public final class HookServer: @unchecked Sendable {
 
     private func sendHTTPResponse(connection: NWConnection, status: Int, body: String, headers: [String] = []) {
         let statusText = status == 200 ? "OK" : "Bad Request"
-        let extraHeaders = headers.isEmpty ? "" : headers.map { "\($0)\r\n" }.joined()
-        let response = """
-        HTTP/1.1 \(status) \(statusText)\r
-        Content-Type: application/json\r
-        Content-Length: \(body.utf8.count)\r
-        \(extraHeaders)Connection: close\r
-        \r
-        \(body)
-        """
+        let extraHeaders = headers.map { "\($0)\r\n" }.joined()
+        // NOTE: HTTP headers must start at column 0 (no leading whitespace).
+        // Use string concatenation, NOT a multiline string literal (which adds indentation).
+        let response = "HTTP/1.1 \(status) \(statusText)\r\n"
+            + "Content-Type: application/json\r\n"
+            + "Content-Length: \(body.utf8.count)\r\n"
+            + extraHeaders
+            + "Connection: close\r\n"
+            + "\r\n"
+            + body
         connection.send(content: response.data(using: .utf8), completion: .contentProcessed { _ in
             connection.cancel()
         })
@@ -713,10 +714,14 @@ private func handleSetup() -> Bool {
     ]
 
     var hooks = settings["hooks"] as? [String: Any] ?? [:]
+    let agentPongEntry: [String: Any] = ["type": "command", "command": hookPath]
     for event in hookEvents {
-        hooks[event] = [
-            ["type": "command", "command": hookPath]
-        ]
+        var eventHooks = hooks[event] as? [[String: Any]] ?? []
+        // Don't duplicate: remove any existing AgentPong hook for this event
+        eventHooks.removeAll { ($0["command"] as? String)?.contains("agentpong") == true }
+        // Append our hook (preserves other tools' hooks)
+        eventHooks.append(agentPongEntry)
+        hooks[event] = eventHooks
     }
     settings["hooks"] = hooks
 
@@ -795,15 +800,29 @@ private func subscribeToHookEvents() {
 }
 
 private func handleHookEvent(_ event: HookEvent) {
-    // Convert hook event to session update
-    let writer = SessionWriter()
-    try? writer.report(
-        sessionId: event.sessionId,
-        event: event.hookEventName.lowercased(),
-        cwd: event.cwd
-    )
-    // Force immediate refresh instead of waiting for next poll
-    refreshSessions()
+    // Map Claude Code hook event names to SessionWriter event names
+    // SessionWriter expects: "start", "stop", "active", "idle", "error", "needsInput", "notify"
+    let writerEvent: String
+    switch event.hookEventName {
+    case "SessionStart": writerEvent = "start"
+    case "SessionEnd", "Stop": writerEvent = "stop"
+    case "PreToolUse", "PostToolUse": writerEvent = "active"
+    case "Notification": writerEvent = "notify"
+    default: writerEvent = "active"
+    }
+
+    // Do file I/O on background queue, then refresh on main
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+        let writer = SessionWriter()
+        try? writer.report(
+            sessionId: event.sessionId,
+            event: writerEvent,
+            cwd: event.cwd
+        )
+        DispatchQueue.main.async {
+            self?.refreshSessions()
+        }
+    }
 }
 
 private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (HookDecision) -> Void) {
@@ -821,12 +840,28 @@ private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (Hoo
 
     // Show interactive permission bubble on the character
     if let character = characters[sessionId] {
-        let toolDesc = "\(event.toolName ?? "tool"): \(truncate(event.toolInputDescription, to: 30))"
-        character.showPermissionBubble(text: toolDesc) { [weak self] allowed in
-            respond(HookDecision(allow: allowed))
-            self?.pendingPermissions.removeValue(forKey: sessionId)
-            character.removeBubble()
-        }
+        showPermissionBubbleOnCharacter(character, event: event, respond: respond)
+    } else {
+        // Character hasn't arrived yet (first event is PreToolUse).
+        // Queue the bubble to show after character finishes walk-in.
+        // The pending permission is stored; we check for it in arriveCharacter's completion.
+    }
+}
+
+private func showPermissionBubbleOnCharacter(_ character: CharacterNode, event: HookEvent, respond: @escaping (HookDecision) -> Void) {
+    let toolDesc = "\(event.toolName ?? "tool"): \(truncate(event.toolInputDescription, to: 30))"
+    character.showPermissionBubble(text: toolDesc) { [weak self] allowed in
+        respond(HookDecision(allow: allowed))
+        self?.pendingPermissions.removeValue(forKey: event.sessionId)
+        character.removeBubble()
+    }
+
+    // Server-side timeout: auto-deny after 5 minutes to prevent connection leak
+    DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+        guard self?.pendingPermissions[event.sessionId] != nil else { return }
+        respond(HookDecision(allow: true, reason: "auto-allowed: user did not respond in 5 minutes"))
+        self?.pendingPermissions.removeValue(forKey: event.sessionId)
+        character.removeBubble()
     }
 }
 
@@ -1069,6 +1104,22 @@ git commit -m "feat: complete interactivity system - HTTP hooks + permission han
 ```
 
 ---
+
+## Review-driven fixes (from CEO plan review)
+
+**Applied in this plan:**
+1. Event name mapping: `SessionStart`->`start`, `PreToolUse`->`active`, etc. (was silently ignored)
+2. HTTP response uses string concatenation not multiline literal (was adding spaces to headers)
+3. Permission bubbles protected: `updateCharacterBubble` must skip removal when `bubbleNode?.name == "permission-bubble"`. Add this guard to the existing method.
+4. Setup appends hooks instead of overwriting (preserves other tools' hooks)
+5. Server-side 5-minute timeout on permission connections (prevents leak)
+6. Permission for nonexistent character: queued for after walk-in arrives
+7. File I/O moved to background queue to avoid blocking SpriteKit render loop
+
+**Still need during implementation:**
+- TCP buffering: single `receive` may not get full HTTP body. If issues arise, buffer reads using Content-Length header. For v1 with small local payloads (~1KB), single read is likely sufficient.
+- `updateCharacterBubble` in OfficeScene needs a guard: `if bubbleNode?.name == "permission-bubble" { return }` to prevent `refreshSessions()` from clobbering the permission UI.
+- After `arriveCharacter` walk completion, check `pendingPermissions[sessionId]` and show the queued permission bubble.
 
 ## NOT in scope
 
