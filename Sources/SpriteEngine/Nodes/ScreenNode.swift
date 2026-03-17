@@ -407,6 +407,7 @@ class ScreenNode: SKNode {
     /// dark background naturally convey the monitor's perspective.
     func showTexture(_ texture: SKTexture) {
         contentSprite?.removeFromParent()
+        contentSprite = nil
 
         // Compute the bounding box of the trapezoid to size the sprite
         let minX = min(localTopLeft.x, localBottomLeft.x)
@@ -415,21 +416,36 @@ class ScreenNode: SKNode {
         let maxY = max(localTopLeft.y, localTopRight.y)
         let w = maxX - minX
         let h = maxY - minY
-
-        // Side monitors need more margin to avoid the trapezoid clipping the icon.
-        let contentScale: CGFloat = isSmall ? 0.72 : 0.95
+        let centerX = (minX + maxX) / 2
 
         texture.filteringMode = .nearest  // pixel-crisp
-        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: w * contentScale, height: h * contentScale))
-        sprite.position = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+
+        // Texture is tall (3x screen height) for scrolling.
+        // Show it at screen width, full texture height.
+        let texAspect = texture.size().height / texture.size().width
+        let spriteW = w * 0.95
+        let spriteH = spriteW * texAspect
+
+        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: spriteW, height: spriteH))
+        // Start with bottom of texture aligned to bottom of screen
+        sprite.anchorPoint = CGPoint(x: 0.5, y: 0.0)
+        sprite.position = CGPoint(x: centerX, y: minY)
         sprite.zPosition = 1  // above screenBg (z:0) within the crop
         contentSprite = sprite
         cropNode.addChild(sprite)
 
-        // Solid black behind texture (fills transparent areas)
+        // Slow upward scroll: content scrolls through the crop window
+        let scrollDistance = spriteH - h
+        if scrollDistance > 2 {
+            let scrollDuration = Double.random(in: 20...35)  // slow ambient scroll
+            let scroll = SKAction.moveBy(x: 0, y: scrollDistance, duration: scrollDuration)
+            let reset = SKAction.move(to: CGPoint(x: centerX, y: minY), duration: 0)
+            sprite.run(SKAction.repeatForever(SKAction.sequence([scroll, reset])), withKey: "scroll")
+        }
+
         statusLabel.isHidden = true
         detailLabel.isHidden = true
-        screenBg.fillColor = SKColor(red: 0.01, green: 0.01, blue: 0.02, alpha: 1.0)
+        screenBg.fillColor = SKColor(red: 0.02, green: 0.02, blue: 0.04, alpha: 1.0)
     }
 
     /// Revert to the status color fill (fallback when no textures are available).
