@@ -405,6 +405,10 @@ class ScreenNode: SKNode {
     // MARK: - Screen Content Textures
 
     /// Display a decorative texture inside the screen shape, hiding the status color fill.
+    ///
+    /// Content is scaled down on side monitors so the icon stays comfortably
+    /// within the trapezoid crop area. No rotation -- the trapezoid crop and
+    /// dark background naturally convey the monitor's perspective.
     func showTexture(_ texture: SKTexture) {
         contentSprite?.removeFromParent()
 
@@ -416,8 +420,11 @@ class ScreenNode: SKNode {
         let w = maxX - minX
         let h = maxY - minY
 
+        // Side monitors need more margin to avoid the trapezoid clipping the icon.
+        let contentScale: CGFloat = isSmall ? 0.72 : 0.95
+
         texture.filteringMode = .nearest  // pixel-crisp
-        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: w, height: h))
+        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: w * contentScale, height: h * contentScale))
         sprite.position = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
         sprite.zPosition = 1  // above screenBg (z:0) within the crop
         contentSprite = sprite
