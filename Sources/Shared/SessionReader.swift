@@ -16,8 +16,9 @@ public final class SessionReader {
         return d
     }()
 
-    /// Stale threshold: sessions not updated in 5 minutes are considered gone
-    private let staleThreshold: TimeInterval = 300
+    /// Stale threshold: sessions not updated in 2 hours are considered gone.
+    /// This is a fallback -- primary detection uses kill(pid, 0) process liveness.
+    private let staleThreshold: TimeInterval = 7200
 
     public init(
         primaryDir: URL? = nil,
@@ -45,13 +46,34 @@ public final class SessionReader {
             }
         }
 
-        // Filter stale sessions
+        // Filter: dead processes first (like AgentPing's markDeadProcessSessions),
+        // then stale sessions as fallback
         let now = Date()
         sessions = sessions.filter { session in
-            now.timeIntervalSince(session.lastUpdated) < staleThreshold
+            // Skip done/unavailable sessions
+            guard session.isVisible else { return false }
+
+            // Primary check: is the process still alive? (AgentPing approach)
+            if let pid = session.pid, pid > 0 {
+                if !isProcessAlive(pid_t(pid)) {
+                    logger.info("Session \(session.id) process \(pid) is dead, filtering out")
+                    return false
+                }
+            }
+
+            // Fallback: stale threshold for sessions without PID
+            return now.timeIntervalSince(session.lastUpdated) < staleThreshold
         }
 
         return sessions.sorted { $0.lastUpdated > $1.lastUpdated }
+    }
+
+    /// Check if a process is alive using kill(pid, 0) syscall.
+    /// Same approach as AgentPing's SessionManager.markDeadProcessSessions().
+    /// - kill(pid, 0) returns 0 if process exists and we can signal it
+    /// - errno == EPERM means process exists but we lack permission (still alive)
+    private func isProcessAlive(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
     }
 
     private func readDirectory(_ dir: URL) -> [Session] {

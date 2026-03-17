@@ -18,23 +18,33 @@ class ScreenNode: SKNode {
             lhs.rawValue < rhs.rawValue
         }
 
+        static func from(_ sessionStatus: SessionStatus) -> ScreenStatus {
+            switch sessionStatus {
+            case .running:    return .running
+            case .needsInput: return .needsInput
+            case .error:      return .error
+            case .idle:       return .idle
+            case .done, .unavailable: return .off
+            }
+        }
+
         var color: SKColor {
             switch self {
             case .off:        return SKColor(white: 0.05, alpha: 0.3)
             case .idle:       return SKColor(red: 0.3, green: 0.3, blue: 0.35, alpha: 0.5)
-            case .running:    return SKColor(red: 0.1, green: 0.6, blue: 0.2, alpha: 0.7)
-            case .needsInput: return SKColor(red: 0.85, green: 0.65, blue: 0.1, alpha: 0.8)
-            case .error:      return SKColor(red: 0.8, green: 0.15, blue: 0.15, alpha: 0.8)
+            case .running:    return SKColor(red: 0.1, green: 0.6, blue: 0.2, alpha: 0.9)
+            case .needsInput: return SKColor(red: 0.85, green: 0.65, blue: 0.1, alpha: 0.92)
+            case .error:      return SKColor(red: 0.8, green: 0.15, blue: 0.15, alpha: 0.92)
             }
         }
 
         var glowColor: SKColor {
             switch self {
             case .off:        return .clear
-            case .idle:       return SKColor(red: 0.2, green: 0.2, blue: 0.3, alpha: 0.15)
-            case .running:    return SKColor(red: 0.1, green: 0.5, blue: 0.15, alpha: 0.25)
-            case .needsInput: return SKColor(red: 0.6, green: 0.5, blue: 0.05, alpha: 0.3)
-            case .error:      return SKColor(red: 0.6, green: 0.1, blue: 0.1, alpha: 0.35)
+            case .idle:       return SKColor(red: 0.2, green: 0.2, blue: 0.3, alpha: 0.3)
+            case .running:    return SKColor(red: 0.1, green: 0.5, blue: 0.15, alpha: 0.45)
+            case .needsInput: return SKColor(red: 0.6, green: 0.5, blue: 0.05, alpha: 0.55)
+            case .error:      return SKColor(red: 0.6, green: 0.1, blue: 0.1, alpha: 0.6)
             }
         }
     }
@@ -43,11 +53,16 @@ class ScreenNode: SKNode {
     private let glowNode: SKShapeNode
     private let statusLabel: SKLabelNode
     private let detailLabel: SKLabelNode
+    private let cropNode: SKCropNode
+    private var contentSprite: SKSpriteNode?
     private var permissionBubble: SKNode?
     private var permissionCallback: ((Bool) -> Void)?
+    private var hoverOverlay: SKShapeNode?
 
     private(set) var status: ScreenStatus = .off
-    private(set) var session: Session?
+    private(set) var sessions: [Session] = []
+    /// First session in the category (for popover display).
+    var session: Session? { sessions.first }
 
     private let localTopLeft: CGPoint
     private let localTopRight: CGPoint
@@ -87,8 +102,8 @@ class ScreenNode: SKNode {
         screenBg.strokeColor = .clear
         screenBg.lineWidth = 0
 
-        // Glow behind screen
-        let glowScale: CGFloat = 1.6
+        // Glow behind screen (very subtle, barely beyond edges)
+        let glowScale: CGFloat = 1.08
         let glowPath = CGMutablePath()
         glowPath.move(to: CGPoint(x: localTopLeft.x * glowScale, y: localTopLeft.y * glowScale))
         glowPath.addLine(to: CGPoint(x: localTopRight.x * glowScale, y: localTopRight.y * glowScale))
@@ -103,16 +118,25 @@ class ScreenNode: SKNode {
         glowNode.zPosition = -1
 
         statusLabel = SKLabelNode(fontNamed: "Menlo-Bold")
-        statusLabel.fontSize = isSmall ? 4 : 6
+        statusLabel.fontSize = isSmall ? 8 : 7
         statusLabel.fontColor = SKColor(white: 0.9, alpha: 0.9)
         statusLabel.verticalAlignmentMode = .center
-        statusLabel.position = CGPoint(x: 0, y: isSmall ? 0 : 2)
+        statusLabel.position = CGPoint(x: 0, y: isSmall ? 0 : 3)
 
         detailLabel = SKLabelNode(fontNamed: "Menlo")
-        detailLabel.fontSize = isSmall ? 3 : 4.5
+        detailLabel.fontSize = isSmall ? 3 : 5
         detailLabel.fontColor = SKColor(white: 0.7, alpha: 0.8)
         detailLabel.verticalAlignmentMode = .center
-        detailLabel.position = CGPoint(x: 0, y: isSmall ? -4 : -5)
+        detailLabel.position = CGPoint(x: 0, y: isSmall ? -4 : -4)
+
+        // Crop node to prevent text/textures from extending beyond screen bounds.
+        // CRITICAL: mask fillColor must be white (opaque) for content to show through.
+        // SKShapeNode defaults to fillColor=.clear which makes the mask fully transparent!
+        cropNode = SKCropNode()
+        let maskShape = SKShapeNode(path: path)
+        maskShape.fillColor = .white
+        maskShape.strokeColor = .white
+        cropNode.maskNode = maskShape
 
         super.init()
 
@@ -120,9 +144,17 @@ class ScreenNode: SKNode {
         self.name = "screen-node"
 
         addChild(glowNode)
-        addChild(screenBg)
-        addChild(statusLabel)
-        if !isSmall { addChild(detailLabel) }
+        // screenBg INSIDE cropNode so it clips to the screen shape
+        screenBg.zPosition = 0
+        cropNode.addChild(screenBg)
+        statusLabel.zPosition = 2
+        cropNode.addChild(statusLabel)
+        if !isSmall {
+            detailLabel.zPosition = 2
+            cropNode.addChild(detailLabel)
+        }
+        cropNode.zPosition = 1  // above glow
+        addChild(cropNode)
     }
 
     /// Convenience init from ZoneManager.MonitorCorners.
@@ -139,48 +171,62 @@ class ScreenNode: SKNode {
 
     // MARK: - Update
 
-    /// Assign a session to this monitor (or nil to turn it off).
-    func assignSession(_ newSession: Session?) {
+    /// Assign a single session to this monitor.
+    func assignSession(_ session: Session?) {
         let oldStatus = status
-        session = newSession
 
-        if let s = newSession {
-            status = screenStatus(for: s)
+        if let session = session {
+            let newStatus = ScreenStatus.from(session.status)
+            self.status = newStatus
+            self.sessions = [session]
         } else {
-            status = .off
+            self.status = .off
+            self.sessions = []
         }
 
         updateVisuals()
+
+        if status == .off {
+            setHovered(false)
+        }
 
         if status != oldStatus {
             animateStatusChange(to: status)
         }
     }
 
-    private func screenStatus(for session: Session) -> ScreenStatus {
-        switch session.status {
-        case .running:    return .running
-        case .needsInput: return .needsInput
-        case .error:      return .error
-        case .idle:       return .idle
-        case .done, .unavailable: return .off
+    /// Turn off this monitor.
+    func turnOff() {
+        assignSession(nil)
+    }
+
+    private func statusLabel(for status: ScreenStatus) -> String {
+        switch status {
+        case .running:    return "working"
+        case .needsInput: return "waiting"
+        case .error:      return "error"
+        case .idle:       return "idle"
+        case .off:        return ""
         }
     }
 
     private func updateVisuals() {
+        // screenBg is inside cropNode, texture sprite covers it at higher z
         screenBg.fillColor = status.color
 
         glowNode.fillColor = status.glowColor
         glowNode.alpha = status == .off ? 0 : 1
 
-        if let s = session {
-            if isSmall {
-                // Small monitor: just show abbreviated status
-                statusLabel.text = String(s.displayName.prefix(6))
-            } else {
-                statusLabel.text = s.displayName
-                detailLabel.text = s.status.rawValue
-            }
+        // Small monitors (side screens): glow only, no text.
+        // 12-18px wide is not enough for readable text -- just be a color signal.
+        if isSmall {
+            statusLabel.text = ""
+        } else if let first = sessions.first {
+            // Center monitor: show status + project name
+            let label = statusLabel(for: status)
+            statusLabel.text = label
+            let name = first.displayName
+            detailLabel.text = name.count > 20 ? String(name.prefix(17)) + "..." : name
         } else {
             statusLabel.text = ""
             detailLabel.text = ""
@@ -241,6 +287,25 @@ class ScreenNode: SKNode {
         return expandedPath.contains(local)
     }
 
+    // MARK: - Hover
+
+    func setHovered(_ hovered: Bool) {
+        if hovered {
+            guard status != .off, hoverOverlay == nil else { return }
+            let overlay = SKShapeNode(path: hitPath)
+            overlay.fillColor = SKColor(white: 1.0, alpha: 0.1)
+            overlay.strokeColor = .clear
+            overlay.lineWidth = 0
+            overlay.zPosition = 5
+            addChild(overlay)
+            hoverOverlay = overlay
+        } else {
+            guard hoverOverlay != nil else { return }
+            hoverOverlay?.removeFromParent()
+            hoverOverlay = nil
+        }
+    }
+
     // MARK: - Permission Bubbles
 
     func showPermissionBubble(text: String, onDecision: @escaping (Bool) -> Void) {
@@ -248,11 +313,11 @@ class ScreenNode: SKNode {
 
         let bubble = SKNode()
         bubble.name = "permission-bubble"
-        bubble.position = CGPoint(x: 0, y: screenHeight / 2 + 20)
+        bubble.position = CGPoint(x: 0, y: screenHeight / 2 + 30)
         bubble.zPosition = 100
 
-        let bgW: CGFloat = 90
-        let bgH: CGFloat = 28
+        let bgW: CGFloat = 140
+        let bgH: CGFloat = 44
         let bg = SKShapeNode(rectOf: CGSize(width: bgW, height: bgH), cornerRadius: 4)
         bg.fillColor = SKColor(white: 0.06, alpha: 0.95)
         bg.strokeColor = SKColor(red: 0.9, green: 0.7, blue: 0.1, alpha: 0.7)
@@ -260,41 +325,41 @@ class ScreenNode: SKNode {
         bubble.addChild(bg)
 
         let label = SKLabelNode(fontNamed: "Menlo")
-        label.text = String(text.prefix(35))
-        label.fontSize = 4.5
+        label.text = String(text.prefix(30))
+        label.fontSize = 7
         label.fontColor = SKColor(white: 0.9, alpha: 0.9)
         label.verticalAlignmentMode = .center
-        label.position = CGPoint(x: 0, y: 5)
+        label.position = CGPoint(x: 0, y: 12)
         bubble.addChild(label)
 
-        let allowBtn = SKShapeNode(rectOf: CGSize(width: 32, height: 10), cornerRadius: 2)
+        let allowBtn = SKShapeNode(rectOf: CGSize(width: 55, height: 18), cornerRadius: 3)
         allowBtn.fillColor = SKColor(red: 0.15, green: 0.5, blue: 0.2, alpha: 1.0)
         allowBtn.strokeColor = .clear
-        allowBtn.position = CGPoint(x: -20, y: -7)
+        allowBtn.position = CGPoint(x: -32, y: -10)
         allowBtn.name = "allow-btn"
         bubble.addChild(allowBtn)
 
         let allowLabel = SKLabelNode(fontNamed: "Menlo-Bold")
         allowLabel.text = "Allow"
-        allowLabel.fontSize = 5
+        allowLabel.fontSize = 8
         allowLabel.fontColor = .white
         allowLabel.verticalAlignmentMode = .center
-        allowLabel.position = CGPoint(x: -20, y: -7)
+        allowLabel.position = CGPoint(x: -32, y: -10)
         bubble.addChild(allowLabel)
 
-        let denyBtn = SKShapeNode(rectOf: CGSize(width: 32, height: 10), cornerRadius: 2)
+        let denyBtn = SKShapeNode(rectOf: CGSize(width: 55, height: 18), cornerRadius: 3)
         denyBtn.fillColor = SKColor(red: 0.5, green: 0.15, blue: 0.15, alpha: 1.0)
         denyBtn.strokeColor = .clear
-        denyBtn.position = CGPoint(x: 20, y: -7)
+        denyBtn.position = CGPoint(x: 32, y: -10)
         denyBtn.name = "deny-btn"
         bubble.addChild(denyBtn)
 
         let denyLabel = SKLabelNode(fontNamed: "Menlo-Bold")
         denyLabel.text = "Deny"
-        denyLabel.fontSize = 5
+        denyLabel.fontSize = 8
         denyLabel.fontColor = .white
         denyLabel.verticalAlignmentMode = .center
-        denyLabel.position = CGPoint(x: 20, y: -7)
+        denyLabel.position = CGPoint(x: 32, y: -10)
         bubble.addChild(denyLabel)
 
         let pulse = SKAction.sequence([
@@ -320,14 +385,14 @@ class ScreenNode: SKNode {
         let localPoint = convert(scenePoint, from: parentScene)
         let bubbleY = bubble.position.y
 
-        let allowArea = CGRect(x: -36, y: bubbleY - 14, width: 32, height: 12)
+        let allowArea = CGRect(x: -59.5, y: bubbleY - 19, width: 55, height: 18)
         if allowArea.contains(localPoint) {
             permissionCallback?(true)
             removePermissionBubble()
             return true
         }
 
-        let denyArea = CGRect(x: 4, y: bubbleY - 14, width: 32, height: 12)
+        let denyArea = CGRect(x: 4.5, y: bubbleY - 19, width: 55, height: 18)
         if denyArea.contains(localPoint) {
             permissionCallback?(false)
             removePermissionBubble()
@@ -335,5 +400,41 @@ class ScreenNode: SKNode {
         }
 
         return false
+    }
+
+    // MARK: - Screen Content Textures
+
+    /// Display a decorative texture inside the screen shape, hiding the status color fill.
+    func showTexture(_ texture: SKTexture) {
+        contentSprite?.removeFromParent()
+
+        // Compute the bounding box of the trapezoid to size the sprite
+        let minX = min(localTopLeft.x, localBottomLeft.x)
+        let maxX = max(localTopRight.x, localBottomRight.x)
+        let minY = min(localBottomLeft.y, localBottomRight.y)
+        let maxY = max(localTopLeft.y, localTopRight.y)
+        let w = maxX - minX
+        let h = maxY - minY
+
+        texture.filteringMode = .nearest  // pixel-crisp
+        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: w, height: h))
+        sprite.position = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+        sprite.zPosition = 1  // above screenBg (z:0) within the crop
+        contentSprite = sprite
+        cropNode.addChild(sprite)
+
+        // Solid black behind texture (fills transparent areas)
+        statusLabel.isHidden = true
+        detailLabel.isHidden = true
+        screenBg.fillColor = SKColor(red: 0.01, green: 0.01, blue: 0.02, alpha: 1.0)
+    }
+
+    /// Revert to the status color fill (fallback when no textures are available).
+    func showStatusColor() {
+        contentSprite?.removeFromParent()
+        contentSprite = nil
+        statusLabel.isHidden = false
+        detailLabel.isHidden = false
+        updateVisuals()
     }
 }

@@ -137,6 +137,40 @@ swift run AgentPong      # Run the app
 swift test               # Run tests (15 passing)
 ```
 
+## Hard rules (non-negotiable)
+
+### Sprite animation consistency
+All animation frames/states for the same element MUST have identical scale, anchor point, and bounding box. When switching states (idle->walk, walk->bark, etc.), the sprite must not visibly jump, shrink, or grow. Before committing any sprite animation work:
+- Verify all frames share the same pixel dimensions or are scaled to match
+- Check anchor points are consistent across all states
+- Test state transitions to confirm no visual "pop" or "different object" feel
+
+### Collision detection and position mapping
+This app relies heavily on correct collision detection and position mapping against the background image. These must be designed and verified BEFORE presenting to the user:
+- Zone boundaries must match the visual background (walls, furniture edges, walkable areas)
+- Hit targets for clickable elements must align with their visual representation
+- Test edge cases: pet at boundaries, overlapping zones, click regions near edges
+- Never present untested collision/position work
+
+### Small and large window scaling
+This app has small and large display modes. Both MUST look correct:
+- All sprite positioning, scaling, and collision zones must be tested at BOTH sizes
+- Use relative coordinates and scale factors, not hardcoded pixel values
+- If it looks good at one size but broken at another, it is not done
+- Verify both sizes before presenting any visual change
+
+### Quality bar
+Do not present half-baked solutions. Think deeply before implementing:
+- If a solution requires the user to "keep tuning the same thing," the approach is wrong -- rethink it
+- Verify your work compiles, runs, and looks correct before showing it
+- If you're unsure about visual output, say so explicitly rather than shipping and hoping
+- One well-thought-out solution beats three iterative attempts
+
+### Debugging Approach
+- **When stuck on a bug, stop speculating and gather real information first**
+- If a root cause isn't obvious from reading the code, add logging/instrumentation and ask the user to run it -- don't keep re-theorising without data
+- Avoid the "wait, actually the real issue is..." loop: form one clear hypothesis, test it, then reassess based on evidence
+
 ## Plan
 
 Full plan: `docs/plans/pixel-office-widget-plan.md`

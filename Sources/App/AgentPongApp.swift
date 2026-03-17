@@ -66,6 +66,34 @@ class BorderlessPanel: NSPanel {
     func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
 
+        // Dynamic session categories
+        if let controller = floatController {
+            let sessions = controller.activeSessions
+
+            let categories: [(String, [Session])] = [
+                ("Working", sessions.filter { $0.status == .running }),
+                ("Waiting", sessions.filter { $0.status == .needsInput }),
+                ("Idle", sessions.filter { $0.status == .idle }),
+            ]
+
+            for (label, group) in categories where !group.isEmpty {
+                let catItem = NSMenuItem(title: "\(label) (\(group.count))", action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+                for session in group {
+                    let item = NSMenuItem(title: session.displayName, action: #selector(jumpToSession(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = session
+                    submenu.addItem(item)
+                }
+                catItem.submenu = submenu
+                menu.addItem(catItem)
+            }
+
+            if !sessions.isEmpty {
+                menu.addItem(NSMenuItem.separator())
+            }
+        }
+
         // Size presets
         for preset in WindowPreset.allCases {
             let item = NSMenuItem(title: preset.rawValue, action: #selector(setSize(_:)), keyEquivalent: "")
@@ -85,6 +113,11 @@ class BorderlessPanel: NSPanel {
         menu.items.last?.target = self
 
         return menu
+    }
+
+    @objc private func jumpToSession(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? Session else { return }
+        WindowJumper.shared.jump(to: session)
     }
 
     @objc private func closePanel() {
@@ -143,6 +176,7 @@ class FloatingWindowController {
     private var window: BorderlessPanel?
     private var skView: SKView?
     var currentPreset: WindowPreset = .small
+    private var hookServer: HookServer?
 
     private let shadowPad: CGFloat = 16
 
@@ -229,6 +263,11 @@ class FloatingWindowController {
         panel.makeKeyAndOrderFront(nil)
         panel.setupHoverControls()
         self.window = panel
+
+        // Re-wire hookServer to the new scene
+        if let server = hookServer {
+            passHookServer(server)
+        }
     }
 
     func setPreset(_ preset: WindowPreset) {
@@ -244,7 +283,12 @@ class FloatingWindowController {
         }
     }
 
+    var activeSessions: [Session] {
+        (skView?.scene as? OfficeScene)?.currentSessions.filter(\.isVisible) ?? []
+    }
+
     func passHookServer(_ server: HookServer) {
+        self.hookServer = server
         if let scene = skView?.scene as? OfficeScene {
             scene.hookServer = server
         }

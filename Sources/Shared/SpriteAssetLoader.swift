@@ -161,6 +161,13 @@ public final class SpriteAssetLoader {
         texture(named: "husky/south.png") != nil
     }
 
+    // MARK: - Screen Textures
+
+    /// Load a screen content texture from ~/.agentpong/sprites/screens/{name}.png
+    public func screenTexture(named name: String) -> SKTexture? {
+        texture(named: "screens/\(name).png")
+    }
+
     // MARK: - Legacy (kept for backward compat during transition)
 
     /// Load desk texture by index and variant.

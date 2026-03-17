@@ -17,6 +17,7 @@ public class OfficeScene: SKScene {
     private var sessions: [Session] = []
     private let sessionReader = SessionReader()
     private let zoneManager = ZoneManager()
+    private let screenContentManager = ScreenContentManager()
 
     private var lastPollTime: TimeInterval = 0
     private var lastUpdateTime: TimeInterval = 0
@@ -27,7 +28,11 @@ public class OfficeScene: SKScene {
     private var husky: HuskyNode?
     private var huskyShadow: SKNode?
     private var statusLabel: SKLabelNode?
+    private var statusShadowLabel: SKLabelNode?
     private var infoOverlay: SKNode?
+    private var overlayRowNodes: [SKShapeNode] = []
+    private var overlayRowBaseColors: [SKColor] = []
+    private var hoveredRowIndex: Int = -1
 
     // Hook server for real-time events
     private struct PendingPermission {
@@ -62,8 +67,8 @@ public class OfficeScene: SKScene {
 
         effectsLayer.zPosition = 45
         petLayer.zPosition = 50
-        uiLayer.zPosition = 200
-        overlayLayer.zPosition = 300
+        uiLayer.zPosition = 550       // above lamp (450) and foreground (500)
+        overlayLayer.zPosition = 600   // above everything
 
         addChild(effectsLayer)
         addChild(petLayer)
@@ -71,6 +76,7 @@ public class OfficeScene: SKScene {
         addChild(overlayLayer)
 
         setupBackground()
+        setupForegroundObjects()
         setupScreens()
         setupHusky()
         setupUI()
@@ -108,6 +114,9 @@ public class OfficeScene: SKScene {
         } else {
             allOffTimer = 0
         }
+
+        // Screen content rotation (decorative textures)
+        screenContentManager.update(deltaTime: dt, sessions: sessions, screenNodes: screenNodes)
     }
 
     // MARK: - Background
@@ -125,14 +134,10 @@ public class OfficeScene: SKScene {
     private func loadBackgroundImage() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
 
+        // Try background.png first (clean room without foreground objects)
         let bgPath = home.appendingPathComponent(".agentpong/themes/background.png")
-        let fgPath = home.appendingPathComponent(".agentpong/themes/foreground.png")
-
         if FileManager.default.fileExists(atPath: bgPath.path),
-           FileManager.default.fileExists(atPath: fgPath.path),
-           let bgImage = NSImage(contentsOfFile: bgPath.path),
-           let fgImage = NSImage(contentsOfFile: fgPath.path) {
-
+           let bgImage = NSImage(contentsOfFile: bgPath.path) {
             let bgTex = SKTexture(image: bgImage)
             bgTex.filteringMode = .nearest
             let bg = SKSpriteNode(texture: bgTex, size: CGSize(width: 320, height: 320))
@@ -140,16 +145,21 @@ public class OfficeScene: SKScene {
             bg.zPosition = -1000
             addChild(bg)
 
-            let fgTex = SKTexture(image: fgImage)
-            fgTex.filteringMode = .nearest
-            let fg = SKSpriteNode(texture: fgTex, size: CGSize(width: 320, height: 320))
-            fg.position = CGPoint(x: 160, y: 160)
-            fg.zPosition = 500
-            addChild(fg)
-
+            // Optional foreground overlay (full-scene layer)
+            let fgPath = home.appendingPathComponent(".agentpong/themes/foreground.png")
+            if FileManager.default.fileExists(atPath: fgPath.path),
+               let fgImage = NSImage(contentsOfFile: fgPath.path) {
+                let fgTex = SKTexture(image: fgImage)
+                fgTex.filteringMode = .nearest
+                let fg = SKSpriteNode(texture: fgTex, size: CGSize(width: 320, height: 320))
+                fg.position = CGPoint(x: 160, y: 160)
+                fg.zPosition = 500
+                addChild(fg)
+            }
             return true
         }
 
+        // Fallback: single default image
         for ext in ["png", "jpg", "webp"] {
             let path = home.appendingPathComponent(".agentpong/themes/default.\(ext)")
             if FileManager.default.fileExists(atPath: path.path),
@@ -166,6 +176,62 @@ public class OfficeScene: SKScene {
         return false
     }
 
+    // MARK: - Foreground Objects
+
+    /// Load isolated object sprites (lamp, plant, water bowl) as individual nodes.
+    /// Positions measured by diffing original image vs clean background.
+    /// These are placed in petLayer for proper depth sorting with the husky.
+    private func setupForegroundObjects() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let objectsDir = home.appendingPathComponent(".agentpong/sprites/objects")
+        let imgScale: CGFloat = 1024.0 / 320.0  // 3.2
+
+        // Positions measured from original image diff (image center coords):
+        //   Lamp:  (483, 244) -> scene (150.9, 243.9)
+        //   Plant: (876, 836) -> scene (273.9, 58.9)
+        //   Bowl:  (364, 941) -> scene (113.6, 25.9)
+
+        // Lamp -- hangs from ceiling. Globe center measured at scene (160.2, 213.7).
+        // Pole top at scene y=273.1. The sprite has pole at top, globe at bottom.
+        // Anchor at top-center, position at pole top so it hangs naturally.
+        // NOTE: pole x=126.5 but globe center x=160.2 -- the globe is off-center
+        // in the sprite. Use globe-centered x so it matches the original image.
+        if let lampImg = NSImage(contentsOfFile: objectsDir.appendingPathComponent("lamp.png").path) {
+            let tex = SKTexture(image: lampImg)
+            tex.filteringMode = .nearest
+            let node = SKSpriteNode(texture: tex)
+            node.size = CGSize(width: tex.size().width / imgScale, height: tex.size().height / imgScale)
+            node.anchorPoint = CGPoint(x: 0.5, y: 1.0)
+            node.position = CGPoint(x: 168.0, y: 310.0)
+            node.zPosition = 400  // always above husky (ceiling object)
+            petLayer.addChild(node)
+        }
+
+        // Plant -- bottom right, closer to camera, should occlude husky when behind
+        if let plantImg = NSImage(contentsOfFile: objectsDir.appendingPathComponent("plant.png").path) {
+            let tex = SKTexture(image: plantImg)
+            tex.filteringMode = .nearest
+            let node = SKSpriteNode(texture: tex)
+            node.size = CGSize(width: tex.size().width / imgScale, height: tex.size().height / imgScale)
+            node.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            node.position = CGPoint(x: 273.9, y: 58.9)
+            node.zPosition = zoneManager.zPosition(for: 58.9)
+            petLayer.addChild(node)
+        }
+
+        // Water bowl -- small, on the floor
+        if let bowlImg = NSImage(contentsOfFile: objectsDir.appendingPathComponent("water-bowl.png").path) {
+            let tex = SKTexture(image: bowlImg)
+            tex.filteringMode = .nearest
+            let node = SKSpriteNode(texture: tex)
+            node.size = CGSize(width: tex.size().width / imgScale, height: tex.size().height / imgScale)
+            node.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            node.position = CGPoint(x: 116.6, y: 26.9)
+            node.zPosition = zoneManager.zPosition(for: 25.9)
+            petLayer.addChild(node)
+        }
+    }
+
     // MARK: - Screens (Triple Monitor)
 
     private func setupScreens() {
@@ -177,25 +243,18 @@ public class OfficeScene: SKScene {
         }
     }
 
-    /// Distribute sessions across monitors. Priority: running > needsInput > error > idle.
-    /// Center monitor gets first session, then left, then right.
+    /// Distribute sessions across monitors: one session per screen.
+    /// Sorted by priority (needsInput > error > running > idle).
+    /// Center monitor gets the most important session, then left, then right.
     private func distributeSessionsToScreens() {
         let visible = sessions.filter(\.isVisible)
-
-        // Sort by priority: running first, then needsInput, error, idle
-        let sorted = visible.sorted { a, b in
-            priority(a.status) > priority(b.status)
-        }
+            .sorted { priority($0.status) > priority($1.status) }
 
         // Assign: center (index 1) first, then left (0), then right (2)
         let assignOrder = [1, 0, 2]
         for (i, screenIdx) in assignOrder.enumerated() {
             guard screenIdx < screenNodes.count else { continue }
-            if i < sorted.count {
-                screenNodes[screenIdx].assignSession(sorted[i])
-            } else {
-                screenNodes[screenIdx].assignSession(nil)
-            }
+            screenNodes[screenIdx].assignSession(i < visible.count ? visible[i] : nil)
         }
     }
 
@@ -239,11 +298,42 @@ public class OfficeScene: SKScene {
     // MARK: - UI
 
     private func setupUI() {
-        let label = SKLabelNode(fontNamed: "Menlo")
-        label.fontSize = 6
-        label.fontColor = SKColor(white: 0.5, alpha: 0.7)
-        label.position = CGPoint(x: 160, y: 6)
-        uiLayer.addChild(label)
+        // Floor text: perspective values from user's browser tuner tool.
+        // Tuner values: x=527, y=576, fs=80, rotateX=55, scaleX=0.75
+        // Converted: position=(164.7, 140.0), fontSize=50, yScale=cos(55deg)=0.574
+        // Dark color + multiply blend = text looks stenciled/painted on the wood floor.
+        // Shadow label (offset slightly for deboss/3D effect)
+        let shadow = SKLabelNode(fontNamed: "Menlo-Bold")
+        shadow.fontSize = 38
+        shadow.fontColor = SKColor(red: 0.08, green: 0.05, blue: 0.02, alpha: 0.15)
+        shadow.horizontalAlignmentMode = .center
+        shadow.verticalAlignmentMode = .center
+        shadow.numberOfLines = 0
+        shadow.preferredMaxLayoutWidth = 240
+        shadow.position = CGPoint(x: 165.5, y: 139.0)  // offset down-right
+        shadow.zRotation = 0
+        shadow.xScale = 0.75
+        shadow.yScale = 0.574
+        shadow.blendMode = .multiply
+        shadow.zPosition = 30  // below screens (40) and pet (50+)
+        addChild(shadow)
+        statusShadowLabel = shadow
+
+        // Main label
+        let label = SKLabelNode(fontNamed: "Menlo-Bold")
+        label.fontSize = 38
+        label.fontColor = SKColor(red: 0.12, green: 0.08, blue: 0.03, alpha: 0.45)
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+        label.numberOfLines = 0
+        label.preferredMaxLayoutWidth = 240
+        label.position = CGPoint(x: 164.7, y: 140.0)
+        label.zRotation = 0
+        label.xScale = 0.75
+        label.yScale = 0.574
+        label.blendMode = .multiply
+        label.zPosition = 31  // just above shadow, below screens (40) and pet (50+)
+        addChild(label)
         statusLabel = label
         updateStatusLabel()
     }
@@ -268,18 +358,23 @@ public class OfficeScene: SKScene {
 
     private func updateStatusLabel() {
         let visible = sessions.filter(\.isVisible)
+        let text: String
         if visible.isEmpty {
-            statusLabel?.text = "office is quiet"
+            text = ""
         } else {
             let r = visible.filter { $0.status == .running }.count
-            let i = visible.filter { $0.status == .idle || $0.status == .needsInput }.count
+            let w = visible.filter { $0.status == .needsInput }.count
+            let i = visible.filter { $0.status == .idle }.count
             let e = visible.filter { $0.status == .error }.count
-            var p: [String] = []
-            if r > 0 { p.append("\(r) working") }
-            if i > 0 { p.append("\(i) idle") }
-            if e > 0 { p.append("\(e) error") }
-            statusLabel?.text = p.joined(separator: " | ")
+            var lines: [String] = []
+            if r > 0 { lines.append("\(r) working") }
+            if w > 0 { lines.append("\(w) waiting") }
+            if i > 0 { lines.append("\(i) idle") }
+            if e > 0 { lines.append("\(e) error") }
+            text = lines.joined(separator: "\n")
         }
+        statusLabel?.text = text
+        statusShadowLabel?.text = text
     }
 
     // MARK: - Mouse Interaction
@@ -287,8 +382,9 @@ public class OfficeScene: SKScene {
     public override func mouseDown(with event: NSEvent) {
         let location = event.location(in: self)
 
-        // Dismiss info overlay if shown (click outside)
+        // Info overlay: check buttons first, dismiss only if click was outside
         if infoOverlay != nil {
+            if handleOverlayClick(at: location) { return }
             dismissInfoOverlay()
             return
         }
@@ -301,6 +397,8 @@ public class OfficeScene: SKScene {
         // Click on a screen -> show info overlay
         for screen in screenNodes {
             if screen.hitTest(scenePoint: location), screen.session != nil {
+                // Clear all hover states before showing overlay
+                screenNodes.forEach { $0.setHovered(false) }
                 showInfoOverlay(for: screen)
                 return
             }
@@ -319,157 +417,263 @@ public class OfficeScene: SKScene {
         if husky?.behavior == .watchingCursor {
             husky?.faceCursor(scenePoint: location)
         }
+
+        // Overlay hover: cursor + row highlight
+        if let overlay = infoOverlay {
+            let local = CGPoint(x: location.x - 160, y: location.y - 160)
+            var overInteractive = false
+
+            // Check close X button area
+            if let closeY = overlay.userData?["closeY"] as? CGFloat,
+               let panelW = overlay.userData?["panelW"] as? CGFloat {
+                let closeArea = CGRect(x: panelW / 2 - 28, y: closeY - 10, width: 24, height: 24)
+                if closeArea.contains(local) {
+                    overInteractive = true
+                }
+            }
+
+            // Check row areas for hover highlight
+            var newHoveredRow = -1
+            if let rows = overlay.userData?["rowAreas"] as? [[String: Any]] {
+                for (i, row) in rows.enumerated() {
+                    guard let x = row["x"] as? CGFloat,
+                          let y = row["y"] as? CGFloat,
+                          let w = row["w"] as? CGFloat,
+                          let h = row["h"] as? CGFloat else { continue }
+                    let area = CGRect(x: x, y: y, width: w, height: h)
+                    if area.contains(local) {
+                        newHoveredRow = i
+                        overInteractive = true
+                        break
+                    }
+                }
+            }
+
+            // Update row highlight if changed
+            if newHoveredRow != hoveredRowIndex {
+                // Reset previous
+                if hoveredRowIndex >= 0, hoveredRowIndex < overlayRowNodes.count {
+                    overlayRowNodes[hoveredRowIndex].fillColor = overlayRowBaseColors[hoveredRowIndex]
+                }
+                // Set new
+                if newHoveredRow >= 0, newHoveredRow < overlayRowNodes.count {
+                    overlayRowNodes[newHoveredRow].fillColor = overlayRowBaseColors[newHoveredRow]
+                        .blended(withFraction: 0.3, of: SKColor(white: 0.4, alpha: 1.0)) ?? overlayRowBaseColors[newHoveredRow]
+                }
+                hoveredRowIndex = newHoveredRow
+            }
+
+            overInteractive ? NSCursor.pointingHand.set() : NSCursor.arrow.set()
+            return
+        }
+
+        // Hover highlight on monitors
+        for screen in screenNodes {
+            screen.setHovered(screen.hitTest(scenePoint: location) && screen.session != nil)
+        }
+
+        // Cursor feedback: hand cursor over clickable elements
+        let overClickable = screenNodes.contains { $0.hitTest(scenePoint: location) && $0.session != nil }
+            || (husky?.hitTest(location) == true)
+        NSCursor.current == NSCursor.pointingHand
+            ? (overClickable ? () : NSCursor.arrow.set())
+            : (overClickable ? NSCursor.pointingHand.set() : ())
     }
 
-    // MARK: - Info Overlay (RPG-style dialogue box)
+    public override func rightMouseDown(with event: NSEvent) {
+        // Forward to the window's rightMouseDown which builds the context menu
+        view?.window?.rightMouseDown(with: event)
+    }
 
+    // MARK: - Info Overlay (Fullscreen Session List)
+
+    /// Show a fullscreen overlay listing ALL visible sessions as clickable rows.
+    /// Click a row to jump to that session. X button to close.
     private func showInfoOverlay(for screen: ScreenNode) {
-        guard let session = screen.session else { return }
         dismissInfoOverlay()
+        let visible = sessions.filter(\.isVisible)
+            .sorted { priority($0.status) > priority($1.status) }
+        guard !visible.isEmpty else { return }
 
         let overlay = SKNode()
         overlay.name = "info-overlay"
         overlay.position = CGPoint(x: 160, y: 160)
-        overlay.zPosition = 300
 
-        // Dimmed backdrop
+        // Dimmed backdrop (fullscreen)
         let backdrop = SKShapeNode(rectOf: CGSize(width: 320, height: 320))
-        backdrop.fillColor = SKColor(white: 0, alpha: 0.4)
+        backdrop.fillColor = SKColor(white: 0, alpha: 0.6)
         backdrop.strokeColor = .clear
-        backdrop.name = "backdrop"
         overlay.addChild(backdrop)
 
-        // RPG-style panel (dark box with pixel border)
-        let panelW: CGFloat = 200
-        let panelH: CGFloat = 90
-        let panel = SKShapeNode(rectOf: CGSize(width: panelW, height: panelH), cornerRadius: 3)
-        panel.fillColor = SKColor(red: 0.06, green: 0.05, blue: 0.08, alpha: 0.95)
-        panel.strokeColor = screen.status.color.withAlphaComponent(0.8)
-        panel.lineWidth = 1.5
+        // Panel: nearly fullscreen with margin
+        let panelW: CGFloat = 290
+        let rowH: CGFloat = 48
+        let headerH: CGFloat = 36
+        let panelH = headerH + CGFloat(visible.count) * rowH + 12
+        let maxH: CGFloat = 280
+        let clampedH = min(panelH, maxH)
+
+        let panel = SKShapeNode(rectOf: CGSize(width: panelW, height: clampedH), cornerRadius: 6)
+        panel.fillColor = SKColor(red: 0.04, green: 0.03, blue: 0.05, alpha: 0.95)
+        panel.strokeColor = SKColor(white: 0.3, alpha: 0.4)
+        panel.lineWidth = 1
         panel.name = "panel"
         overlay.addChild(panel)
 
-        // Inner border (double-border RPG style)
-        let inner = SKShapeNode(rectOf: CGSize(width: panelW - 6, height: panelH - 6), cornerRadius: 2)
-        inner.fillColor = .clear
-        inner.strokeColor = SKColor(white: 0.3, alpha: 0.3)
-        inner.lineWidth = 0.5
-        panel.addChild(inner)
+        // Close X button (top-right of panel)
+        let closeX = SKLabelNode(fontNamed: "Menlo-Bold")
+        closeX.text = "X"
+        closeX.fontSize = 18
+        closeX.fontColor = SKColor(white: 0.6, alpha: 0.9)
+        closeX.verticalAlignmentMode = .center
+        closeX.horizontalAlignmentMode = .center
+        closeX.position = CGPoint(x: panelW / 2 - 20, y: clampedH / 2 - 18)
+        closeX.name = "close-x"
+        panel.addChild(closeX)
 
-        // Session name (title)
+        // Title
         let title = SKLabelNode(fontNamed: "Menlo-Bold")
-        title.text = session.displayName
-        title.fontSize = 8
-        title.fontColor = screen.status.color
+        title.text = "Sessions"
+        title.fontSize = 16
+        title.fontColor = SKColor(white: 0.8, alpha: 0.9)
         title.verticalAlignmentMode = .center
-        title.position = CGPoint(x: 0, y: 28)
+        title.position = CGPoint(x: 0, y: clampedH / 2 - 18)
         panel.addChild(title)
 
-        // Status line
-        let statusLine = SKLabelNode(fontNamed: "Menlo")
-        statusLine.text = "status: \(session.status.rawValue)"
-        statusLine.fontSize = 6
-        statusLine.fontColor = SKColor(white: 0.7, alpha: 0.9)
-        statusLine.verticalAlignmentMode = .center
-        statusLine.position = CGPoint(x: 0, y: 16)
-        panel.addChild(statusLine)
+        // Session rows
+        let startY = clampedH / 2 - headerH - rowH / 2
+        var rowAreas: [(CGRect, String)] = []  // hit areas + session IDs
+        overlayRowNodes = []
+        overlayRowBaseColors = []
+        hoveredRowIndex = -1
 
-        // CWD
-        if let cwd = session.cwd {
-            let cwdLabel = SKLabelNode(fontNamed: "Menlo")
-            let shortCwd = cwd.count > 35 ? "..." + String(cwd.suffix(32)) : cwd
-            cwdLabel.text = shortCwd
-            cwdLabel.fontSize = 4.5
-            cwdLabel.fontColor = SKColor(white: 0.5, alpha: 0.8)
-            cwdLabel.verticalAlignmentMode = .center
-            cwdLabel.position = CGPoint(x: 0, y: 6)
-            panel.addChild(cwdLabel)
+        for (i, session) in visible.prefix(6).enumerated() {
+            let rowY = startY - CGFloat(i) * rowH
+            let status = ScreenNode.ScreenStatus.from(session.status)
+
+            // Row background (subtle, alternating)
+            let rowBg = SKShapeNode(rectOf: CGSize(width: panelW - 16, height: rowH - 4), cornerRadius: 3)
+            let baseColor = i % 2 == 0
+                ? SKColor(white: 0.1, alpha: 0.5)
+                : SKColor(white: 0.08, alpha: 0.3)
+            rowBg.fillColor = baseColor
+            rowBg.strokeColor = .clear
+            rowBg.position = CGPoint(x: 0, y: rowY)
+            panel.addChild(rowBg)
+            overlayRowNodes.append(rowBg)
+            overlayRowBaseColors.append(baseColor)
+
+            // Status dot
+            let dot = SKShapeNode(circleOfRadius: 5)
+            dot.fillColor = status.color.withAlphaComponent(1.0)
+            dot.strokeColor = .clear
+            dot.position = CGPoint(x: -panelW / 2 + 22, y: rowY)
+            panel.addChild(dot)
+
+            // Session name
+            let nameLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+            nameLabel.text = session.displayName
+            nameLabel.fontSize = 14
+            nameLabel.fontColor = .white
+            nameLabel.verticalAlignmentMode = .center
+            nameLabel.horizontalAlignmentMode = .left
+            nameLabel.position = CGPoint(x: -panelW / 2 + 36, y: rowY + 7)
+            panel.addChild(nameLabel)
+
+            // Status + CWD subtitle
+            let sub = SKLabelNode(fontNamed: "Menlo")
+            let cwdSuffix: String
+            if let cwd = session.cwd {
+                let parts = cwd.split(separator: "/")
+                cwdSuffix = " - " + (parts.count >= 2 ? parts.suffix(2).joined(separator: "/") : String(parts.last ?? ""))
+            } else {
+                cwdSuffix = ""
+            }
+            sub.text = "\(session.status.rawValue)\(cwdSuffix)"
+            sub.fontSize = 10
+            sub.fontColor = SKColor(white: 0.5, alpha: 0.8)
+            sub.verticalAlignmentMode = .center
+            sub.horizontalAlignmentMode = .left
+            sub.position = CGPoint(x: -panelW / 2 + 36, y: rowY - 9)
+            panel.addChild(sub)
+
+            // Store hit area (in overlay-local coords, panel is at 0,0 in overlay)
+            let hitRect = CGRect(
+                x: -panelW / 2 + 8,
+                y: rowY - rowH / 2,
+                width: panelW - 16,
+                height: rowH
+            )
+            rowAreas.append((hitRect, session.id))
         }
 
-        // Jump button
-        let jumpBtn = SKShapeNode(rectOf: CGSize(width: 60, height: 14), cornerRadius: 2)
-        jumpBtn.fillColor = SKColor(red: 0.15, green: 0.4, blue: 0.6, alpha: 1.0)
-        jumpBtn.strokeColor = SKColor(red: 0.2, green: 0.5, blue: 0.7, alpha: 0.8)
-        jumpBtn.lineWidth = 0.5
-        jumpBtn.position = CGPoint(x: -35, y: -22)
-        jumpBtn.name = "jump-btn"
-        panel.addChild(jumpBtn)
-
-        let jumpLabel = SKLabelNode(fontNamed: "Menlo-Bold")
-        jumpLabel.text = "JUMP"
-        jumpLabel.fontSize = 6
-        jumpLabel.fontColor = .white
-        jumpLabel.verticalAlignmentMode = .center
-        jumpLabel.position = CGPoint(x: -35, y: -22)
-        panel.addChild(jumpLabel)
-
-        // Close button
-        let closeBtn = SKShapeNode(rectOf: CGSize(width: 60, height: 14), cornerRadius: 2)
-        closeBtn.fillColor = SKColor(white: 0.2, alpha: 0.8)
-        closeBtn.strokeColor = SKColor(white: 0.4, alpha: 0.5)
-        closeBtn.lineWidth = 0.5
-        closeBtn.position = CGPoint(x: 35, y: -22)
-        closeBtn.name = "close-btn"
-        panel.addChild(closeBtn)
-
-        let closeLabel = SKLabelNode(fontNamed: "Menlo-Bold")
-        closeLabel.text = "CLOSE"
-        closeLabel.fontSize = 6
-        closeLabel.fontColor = SKColor(white: 0.7, alpha: 0.9)
-        closeLabel.verticalAlignmentMode = .center
-        closeLabel.position = CGPoint(x: 35, y: -22)
-        panel.addChild(closeLabel)
-
-        // Animate in: scale up from small + fade
-        overlay.setScale(0.3)
+        // Animate in
+        overlay.setScale(0.5)
         overlay.alpha = 0
         overlay.run(SKAction.group([
-            SKAction.scale(to: 1.0, duration: 0.15),
-            SKAction.fadeIn(withDuration: 0.15)
+            SKAction.scale(to: 1.0, duration: 0.12),
+            SKAction.fadeIn(withDuration: 0.12)
         ]))
 
         overlayLayer.addChild(overlay)
         infoOverlay = overlay
 
-        // Store session ID for jump action
+        // Store row hit areas for click handling
         overlay.userData = NSMutableDictionary()
-        overlay.userData?["sessionId"] = session.id
+        overlay.userData?["rowAreas"] = rowAreas.map { ["x": $0.0.origin.x, "y": $0.0.origin.y, "w": $0.0.width, "h": $0.0.height, "id": $0.1] }
+        overlay.userData?["closeY"] = clampedH / 2 - 14
+        overlay.userData?["panelW"] = panelW
+        overlay.userData?["panelH"] = clampedH
     }
 
     private func dismissInfoOverlay() {
         guard let overlay = infoOverlay else { return }
         overlay.run(SKAction.sequence([
             SKAction.group([
-                SKAction.scale(to: 0.3, duration: 0.1),
-                SKAction.fadeOut(withDuration: 0.1)
+                SKAction.scale(to: 0.5, duration: 0.08),
+                SKAction.fadeOut(withDuration: 0.08)
             ]),
             SKAction.removeFromParent()
         ]))
         infoOverlay = nil
+        overlayRowNodes = []
+        overlayRowBaseColors = []
+        hoveredRowIndex = -1
     }
 
     private func handleOverlayClick(at location: CGPoint) -> Bool {
         guard let overlay = infoOverlay else { return false }
 
-        // Convert to overlay-local coords (overlay is at scene center)
+        // Convert to overlay-local coords (overlay centered at 160,160)
         let local = CGPoint(x: location.x - 160, y: location.y - 160)
 
-        // Jump button: centered at (-35, -22) relative to panel (which is at 0,0 in overlay)
-        let jumpArea = CGRect(x: -65, y: -30, width: 60, height: 16)
-        if jumpArea.contains(local) {
-            if let sessionId = overlay.userData?["sessionId"] as? String,
-               let session = sessions.first(where: { $0.id == sessionId }) {
-                WindowJumper.shared.jump(to: session)
+        // Close X button (top-right area)
+        if let closeY = overlay.userData?["closeY"] as? CGFloat,
+           let panelW = overlay.userData?["panelW"] as? CGFloat {
+            let closeArea = CGRect(x: panelW / 2 - 28, y: closeY - 10, width: 24, height: 20)
+            if closeArea.contains(local) {
+                dismissInfoOverlay()
+                return true
             }
-            dismissInfoOverlay()
-            return true
         }
 
-        // Close button: centered at (35, -22)
-        let closeArea = CGRect(x: 5, y: -30, width: 60, height: 16)
-        if closeArea.contains(local) {
-            dismissInfoOverlay()
-            return true
+        // Session row clicks
+        if let rows = overlay.userData?["rowAreas"] as? [[String: Any]] {
+            for row in rows {
+                guard let x = row["x"] as? CGFloat,
+                      let y = row["y"] as? CGFloat,
+                      let w = row["w"] as? CGFloat,
+                      let h = row["h"] as? CGFloat,
+                      let sessionId = row["id"] as? String else { continue }
+                let area = CGRect(x: x, y: y, width: w, height: h)
+                if area.contains(local) {
+                    if let session = sessions.first(where: { $0.id == sessionId }) {
+                        WindowJumper.shared.jump(to: session)
+                    }
+                    dismissInfoOverlay()
+                    return true
+                }
+            }
         }
 
         return false

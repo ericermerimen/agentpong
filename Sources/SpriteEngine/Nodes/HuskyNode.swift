@@ -9,6 +9,13 @@ import Shared
 /// ANIMATION RULE: Never modify sprite scale in animations.
 /// Perspective scaling is handled by OfficeScene via setScale() on this node.
 /// Sprite scale is ONLY set in setSpriteDirection().
+///
+/// CANVAS SIZE NOTE: Template animations (walk, run, bark, idle) are 88x88.
+/// Custom animations (sit, sleep, drink, play) are 128x128 from PixelLab.
+/// All use resize: false so the sprite stays at 88x88 base size.
+/// The 128px textures get squeezed into the 88px frame -- the dog appears
+/// slightly smaller during behaviors but this is far better than the
+/// alternative (resize: true makes them 1.45x too large).
 class HuskyNode: SKNode {
 
     private let sprite: SKSpriteNode
@@ -52,6 +59,11 @@ class HuskyNode: SKNode {
     // Click interaction: playful first, scared if clicked too much
     private var clickCount: Int = 0
     private var lastClickTime: TimeInterval = 0
+
+    /// Shadow Y offset from husky position. Positive = up (overlapping with sprite base).
+    /// The 88px sprite has 23px transparent padding at bottom -- dog's feet are at ~24 scene
+    /// points above the node position. Shadow should sit right at the feet.
+    static let shadowYOffset: CGFloat = 22.0
 
     init(startPosition: CGPoint, wanderZone: CGRect, spriteSize: CGFloat) {
         self.wanderZone = wanderZone
@@ -189,17 +201,45 @@ class HuskyNode: SKNode {
         // Walk to dog bed, then transition to sleep
         walkTo(target: dogBedPosition, speed: 25) { [weak self] in
             self?.behavior = .sleeping
-            // playSleepAnimation handles its own texture (no clearSpriteAnimations needed
-            // since walkTo's completion already cleared + set south)
             self?.playSleepAnimation()
         }
     }
 
     private func wakeUp() {
         behavior = .idle
-        clearSpriteAnimations()
-        setSpriteDirection("south", flipX: false)
-        playIdleAnimation()
+        sprite.removeAllActions()
+        sprite.zRotation = 0
+
+        // Play sleep frames in reverse at SLEEP SCALE (don't scale up while
+        // 128px texture is showing -- that makes the dog huge).
+        // Then swap to standing texture + scale in one atomic step.
+        let frames = assets.huskySleepingFrames()
+        if !frames.isEmpty {
+            // Keep sleep scale during the reverse animation
+            let getUp = SKAction.animate(with: frames.reversed(), timePerFrame: 1.0 / 6.0, resize: false, restore: false)
+            // Ease position back during the animation
+            let easePos = SKAction.move(to: .zero, duration: Double(frames.count) / 6.0)
+            let resetToStanding = SKAction.run { [weak self] in
+                guard let self else { return }
+                // Atomic swap: texture + scale at the same time
+                if let tex = self.baseTexture {
+                    self.sprite.texture = tex
+                    self.sprite.texture?.filteringMode = .nearest
+                }
+                self.sprite.xScale = self.huskyScale
+                self.sprite.yScale = self.huskyScale
+                self.sprite.position = .zero
+                self.playIdleAnimation()
+            }
+            sprite.run(SKAction.sequence([
+                SKAction.group([getUp, easePos]),
+                resetToStanding
+            ]))
+        } else {
+            clearSpriteAnimations()
+            setSpriteDirection("south", flipX: false)
+            playIdleAnimation()
+        }
         wanderTimer = 0
         nextActionDelay = 2.0
     }
@@ -257,7 +297,14 @@ class HuskyNode: SKNode {
     /// Handle click on the husky. Returns true if consumed.
     /// - First clicks: playful response
     /// - Too many clicks: scared, runs away
+    /// - If already scared/running: bark instead of playing
     func handleClick(currentTime: TimeInterval) {
+        // If already scared or doing zoomies, bark instead of playing
+        if behavior == .scared || behavior == .zoomies {
+            playBarkAnimation { }  // bark while continuing to run
+            return
+        }
+
         // Reset click counter if >5s since last click
         if currentTime - lastClickTime > 5.0 {
             clickCount = 0
@@ -266,14 +313,15 @@ class HuskyNode: SKNode {
         clickCount += 1
 
         if clickCount >= 3 {
-            // Too much! Scared and run
             clickCount = 0
             scare()
         } else {
-            // Playful response
             playClickReaction()
         }
     }
+
+    /// Scale for 128px playing/drinking sprites (same ratio as sleepScale).
+    private let behaviorScale: CGFloat = 0.65
 
     private func playClickReaction() {
         guard behavior != .scared else { return }
@@ -281,24 +329,29 @@ class HuskyNode: SKNode {
         // If sleeping/lying, wake up playfully
         if behavior == .sleeping || behavior == .lyingDown {
             wakeUp()
+            return  // wakeUp handles the transition
         }
 
         behavior = .playing
         removeAction(forKey: "wander")
         sprite.removeAllActions()
-        sprite.position = .zero
         sprite.zRotation = 0
 
-        // Keep current direction, play the playing animation
         let frames = assets.huskyPlayingFrames()
         if !frames.isEmpty {
+            // Scale down for 128px canvas (dog fills more of canvas)
+            sprite.xScale = huskyScale * behaviorScale
+            sprite.yScale = huskyScale * behaviorScale
+            // Feet compensation: standing feet at 23.5pts, playing at 8.7pts = +15 to align
+            sprite.position = CGPoint(x: 0, y: 15)
+
             let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 8.0, resize: false, restore: false)
-            let playLoop = SKAction.repeat(animate, count: Int.random(in: 1...2))
+            let playLoop = SKAction.repeat(animate, count: 1)
             sprite.run(SKAction.sequence([playLoop, SKAction.run { [weak self] in
                 self?.transitionToIdle(delay: 2...5)
             }]))
         } else {
-            // Fallback: happy bounce
+            sprite.position = .zero
             let bounce = SKAction.sequence([
                 SKAction.moveBy(x: 0, y: 4, duration: 0.1),
                 SKAction.moveBy(x: 0, y: -4, duration: 0.1),
@@ -398,6 +451,11 @@ class HuskyNode: SKNode {
         }
     }
 
+    /// Scale-UP for sitting sprite. The 128px sitting canvas has the dog at the
+    /// SAME pixel size as 88px standing (41px tall), but the larger canvas makes
+    /// it appear 31% smaller with resize:false. Scale up to compensate.
+    private let sittingScale: CGFloat = 1.35
+
     private func startSitting() {
         behavior = .sitting
         clearSpriteAnimations()
@@ -405,6 +463,13 @@ class HuskyNode: SKNode {
 
         let frames = assets.huskySittingFrames()
         if !frames.isEmpty {
+            // Scale UP to compensate for 128px canvas compression
+            sprite.xScale = huskyScale * sittingScale
+            sprite.yScale = huskyScale * sittingScale
+            // Feet compensation: sitting has 43px bottom pad in 128px canvas,
+            // scaled up = feet 17pts too HIGH. Push down to align.
+            sprite.position = CGPoint(x: 0, y: -17)
+
             let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0, resize: false, restore: false)
             let hold = SKAction.animate(with: [frames.last!], timePerFrame: Double.random(in: 4...10), resize: false, restore: false)
             sprite.run(SKAction.sequence([animate, hold, SKAction.run { [weak self] in
@@ -418,41 +483,59 @@ class HuskyNode: SKNode {
     }
 
     private func startLyingDown() {
-        behavior = .lyingDown
-        clearSpriteAnimations()
-        sprite.xScale = huskyScale  // no flip
-        sprite.yScale = huskyScale
+        // Dog should only lie down on the bed, not in the middle of the floor.
+        // Walk to the bed first, then do the sleep animation briefly.
+        // Use .reactingToScreen during walk to prevent canAct from
+        // interrupting with a new action (which caused sitting-slide bug).
+        behavior = .reactingToScreen
 
-        let frames = assets.huskySleepingFrames()
-        if !frames.isEmpty {
-            // Transition down
-            let lieDown = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0, resize: false, restore: false)
-            // Breathe for a while (loop last 4 frames)
-            let breathFrames = Array(frames.suffix(4))
-            let breathe = SKAction.repeat(
-                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0, resize: false, restore: false),
-                count: Int.random(in: 3...6)
-            )
-            // Get back up (reverse the transition)
-            let getUp = SKAction.animate(with: frames.reversed(), timePerFrame: 1.0 / 6.0, resize: false, restore: false)
-            sprite.run(SKAction.sequence([lieDown, breathe, getUp, SKAction.run { [weak self] in
-                self?.transitionToIdle(delay: 2...4)
-            }]))
-        } else {
-            nextActionDelay = Double.random(in: 4...8)
-            playIdleAnimation()
+        walkTo(target: dogBedPosition, speed: 25) { [weak self] in
+            self?.behavior = .lyingDown
+            guard let self else { return }
+            self.clearSpriteAnimations()
+            self.sprite.xScale = self.huskyScale * self.sleepScale
+            self.sprite.yScale = self.huskyScale * self.sleepScale
+            self.sprite.position = CGPoint(x: 0, y: -4)
+
+            let frames = self.assets.huskySleepingFrames()
+            if !frames.isEmpty {
+                let lieDown = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0, resize: false, restore: false)
+                let lastFrame = frames.last!
+                let holdAndBreathe = SKAction.repeat(
+                    SKAction.sequence([
+                        SKAction.moveBy(x: 0, y: 0.4, duration: 2.5),
+                        SKAction.moveBy(x: 0, y: -0.4, duration: 2.5),
+                    ]),
+                    count: Int.random(in: 2...4)
+                )
+                let getUp = SKAction.animate(with: frames.reversed(), timePerFrame: 1.0 / 6.0, resize: false, restore: false)
+                self.sprite.run(SKAction.sequence([
+                    lieDown,
+                    SKAction.setTexture(lastFrame),
+                    holdAndBreathe,
+                    getUp,
+                    SKAction.run { [weak self] in
+                        self?.transitionToIdle(delay: 2...4)
+                    }
+                ]))
+            } else {
+                self.nextActionDelay = Double.random(in: 4...8)
+                self.playIdleAnimation()
+            }
         }
     }
 
     private func startPlaying() {
         behavior = .playing
         sprite.removeAllActions()
-        sprite.position = .zero
         sprite.zRotation = 0
-        // Keep current facing direction -- don't force south
 
         let frames = assets.huskyPlayingFrames()
         if !frames.isEmpty {
+            sprite.xScale = huskyScale * behaviorScale
+            sprite.yScale = huskyScale * behaviorScale
+            sprite.position = CGPoint(x: 0, y: 15)
+
             let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 8.0, resize: false, restore: false)
             let playLoop = SKAction.repeat(animate, count: Int.random(in: 2...4))
             sprite.run(SKAction.sequence([playLoop, SKAction.run { [weak self] in
@@ -467,7 +550,7 @@ class HuskyNode: SKNode {
         behavior = .drinking
 
         // Walk to just above the bowl, facing south (toward bowl)
-        let drinkSpot = CGPoint(x: waterBowlPosition.x, y: waterBowlPosition.y + 12)
+        let drinkSpot = CGPoint(x: waterBowlPosition.x, y: waterBowlPosition.y + 2)
         walkTo(target: drinkSpot, speed: 25) { [weak self] in
             guard let self else { return }
             self.sprite.removeAllActions()
@@ -669,26 +752,36 @@ class HuskyNode: SKNode {
         }
     }
 
+    /// Scale factor for sleeping/lying sprite. The 128px sleeping canvas has the dog
+    /// filling 64% width vs 20% in 88px standing. Needs to be smaller than standing
+    /// but still visible on the dog bed (perspective scale ~1.25 at bottom of scene).
+    /// 0.65 gives ~83% apparent size at bed, ~66% in room center.
+    private let sleepScale: CGFloat = 0.65
+
     private func playSleepAnimation() {
         clearSpriteAnimations()
-        // Don't call setSpriteDirection here -- it would reset to standing texture.
-        // The sleep frames handle the transition from standing to curled.
-        // Also: don't flip. Keep xScale positive so the curled pose stays consistent.
-        sprite.xScale = huskyScale
-        sprite.yScale = huskyScale
+        // Scale down for sleeping -- 128px canvas dog is proportionally larger
+        sprite.xScale = huskyScale * sleepScale
+        sprite.yScale = huskyScale * sleepScale
+        // Shift sprite down so curled dog sits on the bed, not floating above it
+        sprite.position = CGPoint(x: 0, y: -4)
 
         let frames = assets.huskySleepingFrames()
         if !frames.isEmpty {
-            // Play full transition once (stand -> curl down)
+            // Play transition to the last frame (fully curled), then hold it
+            let lastFrame = frames.last!
             let transition = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0, resize: false, restore: false)
 
-            // Then loop the last 4 frames (breathing while curled) forever
-            let breathFrames = Array(frames.suffix(4))
-            let breathLoop = SKAction.repeatForever(
-                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0, resize: false, restore: false)
-            )
+            // Hold on the LAST frame only. Do NOT alternate between frames --
+            // frames differ by 13% in size which creates jarring movement.
+            // Instead, set the final curled texture and add a subtle Y bob for breathing.
+            let holdLastFrame = SKAction.setTexture(lastFrame)
+            let breathe = SKAction.repeatForever(SKAction.sequence([
+                SKAction.moveBy(x: 0, y: 0.4, duration: 2.5),
+                SKAction.moveBy(x: 0, y: -0.4, duration: 2.5),
+            ]))
 
-            sprite.run(SKAction.sequence([transition, breathLoop]), withKey: "idle")
+            sprite.run(SKAction.sequence([transition, holdLastFrame, breathe]), withKey: "idle")
         } else {
             let breathe = SKAction.sequence([
                 SKAction.moveBy(x: 0, y: 0.3, duration: 3.0),
@@ -718,6 +811,13 @@ class HuskyNode: SKNode {
     private func playDrinkAnimation(completion: @escaping () -> Void) {
         let frames = assets.huskyDrinkingFrames()
         if !frames.isEmpty {
+            // Scale UP for 128px canvas -- drinking dog is same pixel size as
+            // standing (41px) but in larger canvas, so it appears 31% smaller.
+            sprite.xScale = huskyScale * sittingScale
+            sprite.yScale = huskyScale * sittingScale
+            // Same padding as sitting (43px) = feet 17pts too high
+            sprite.position = CGPoint(x: 0, y: -17)
+
             let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0, resize: false, restore: false)
             let drinkLoop = SKAction.repeat(animate, count: 3)
             sprite.run(SKAction.sequence([drinkLoop, SKAction.run(completion)]))

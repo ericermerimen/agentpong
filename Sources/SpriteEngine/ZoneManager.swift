@@ -39,36 +39,33 @@ public class ZoneManager {
         public let bottomRight: CGPoint
     }
 
-    /// Left monitor -- small, slightly angled. Measured via edge detection.
-    /// Image coords: x=467-505, y=165-213 (after top reflection bar).
+    /// Left monitor -- user-clicked corners via browser mapper tool.
     public var leftMonitor: MonitorCorners {
         MonitorCorners(
-            topLeft: imageToScene(x: 468, y: 166),
-            topRight: imageToScene(x: 505, y: 160),
-            bottomLeft: imageToScene(x: 468, y: 212),
-            bottomRight: imageToScene(x: 505, y: 212)
+            topLeft: imageToScene(x: 467, y: 177),
+            topRight: imageToScene(x: 596, y: 135),
+            bottomLeft: imageToScene(x: 465, y: 256),
+            bottomRight: imageToScene(x: 597, y: 212)
         )
     }
 
-    /// Center monitor -- large, straight-on view. Measured via edge detection.
-    /// Image coords: x=614-771, y=134-213.
+    /// Center monitor -- user-clicked corners via browser mapper tool.
     public var centerMonitor: MonitorCorners {
         MonitorCorners(
-            topLeft: imageToScene(x: 614, y: 134),
-            topRight: imageToScene(x: 771, y: 134),
-            bottomLeft: imageToScene(x: 614, y: 212),
-            bottomRight: imageToScene(x: 771, y: 212)
+            topLeft: imageToScene(x: 615, y: 133),
+            topRight: imageToScene(x: 772, y: 134),
+            bottomLeft: imageToScene(x: 615, y: 214),
+            bottomRight: imageToScene(x: 771, y: 213)
         )
     }
 
-    /// Right monitor -- medium, angled right. Measured via edge detection.
-    /// Image coords: x=790-848, y=140-215 (perspective angles top edge).
+    /// Right monitor -- user-clicked corners via browser mapper tool.
     public var rightMonitor: MonitorCorners {
         MonitorCorners(
-            topLeft: imageToScene(x: 790, y: 140),
-            topRight: imageToScene(x: 847, y: 150),
-            bottomLeft: imageToScene(x: 790, y: 214),
-            bottomRight: imageToScene(x: 847, y: 214)
+            topLeft: imageToScene(x: 790, y: 137),
+            topRight: imageToScene(x: 921, y: 175),
+            bottomLeft: imageToScene(x: 789, y: 213),
+            bottomRight: imageToScene(x: 920, y: 256)
         )
     }
 
@@ -93,9 +90,9 @@ public class ZoneManager {
         imageToScene(x: 200, y: 940)
     }
 
-    /// Water bowl position (bottom-center).
+    /// Water bowl position (bottom-center). Measured from image diff.
     public var waterBowlPosition: CGPoint {
-        imageToScene(x: 410, y: 920)
+        imageToScene(x: 373, y: 938)
     }
 
     /// Lamp pole center (exclusion zone for pet).
@@ -116,11 +113,11 @@ public class ZoneManager {
         imageToScene(x: 512, y: 620)
     }
 
-    /// Walkable area for the husky (open floor only -- tight bounds).
-    /// Image coords: x:300-750, y:520-780 (clear of walls, lamp, desk, dog bed, plant).
+    /// Walkable area for the husky (floor + dog bed and water bowl area).
+    /// Image coords: x:250-800, y:520-920 (wide enough for walls, tall enough for dog bed/bowl).
     public var walkableArea: CGRect {
-        let topLeft = imageToScene(x: 300, y: 520)
-        let bottomRight = imageToScene(x: 750, y: 780)
+        let topLeft = imageToScene(x: 250, y: 520)
+        let bottomRight = imageToScene(x: 800, y: 920)
         return CGRect(
             x: bottomRight.x < topLeft.x ? bottomRight.x : topLeft.x,
             y: bottomRight.y < topLeft.y ? bottomRight.y : topLeft.y,
