@@ -49,11 +49,21 @@ class HuskyNode: SKNode {
     private(set) var behavior: Behavior = .idle
     private var idleDuration: TimeInterval = 0  // how long in current idle behavior
 
+    // Click interaction: playful first, scared if clicked too much
+    private var clickCount: Int = 0
+    private var lastClickTime: TimeInterval = 0
+
     init(startPosition: CGPoint, wanderZone: CGRect, spriteSize: CGFloat) {
         self.wanderZone = wanderZone
-        self.huskyScale = 1.5
 
-        if let tex = assets.huskyTexture(direction: "south") {
+        // Detect canvas size from the loaded texture to set correct scale.
+        // Pro sprites are 88px canvas (~52px character), standard are 48px (~28px character).
+        // Target: character should be ~55 scene points tall (visible in both small/large window).
+        let detectedTex = assets.huskyTexture(direction: "south")
+        let canvasHeight = detectedTex?.size().height ?? 48
+        self.huskyScale = 90.0 / canvasHeight
+
+        if let tex = detectedTex {
             sprite = SKSpriteNode(texture: tex)
             sprite.setScale(huskyScale)
             baseTexture = tex
@@ -68,14 +78,12 @@ class HuskyNode: SKNode {
         }
         sprite.anchorPoint = CGPoint(x: 0.5, y: 0.0)
 
-        // Shadow: separate node, NOT a child of HuskyNode.
-        // OfficeScene adds it independently so perspective setScale() on HuskyNode
-        // doesn't distort the shadow position.
-        let shadowShape = SKShapeNode(ellipseOf: CGSize(width: 18, height: 7))
-        shadowShape.fillColor = SKColor(white: 0, alpha: 0.18)
-        shadowShape.strokeColor = .clear
-        shadowShape.zPosition = -1
-        shadow = shadowShape
+        // Shadow: soft alpha-blended ellipse, separate from HuskyNode.
+        // OfficeScene manages position + perspective scaling independently.
+        let shadowTex = Self.makeShadowTexture(resolution: 64)
+        let shadowSprite = SKSpriteNode(texture: shadowTex, size: CGSize(width: 32, height: 12))
+        shadowSprite.zPosition = -1
+        shadow = shadowSprite
 
         super.init()
         addChild(sprite)
@@ -232,10 +240,11 @@ class HuskyNode: SKNode {
         idleDuration = 0
         wanderTimer = 0
         nextActionDelay = Double.random(in: delay)
+        clearSpriteAnimations()
         playIdleAnimation()
     }
 
-    // MARK: - Click
+    // MARK: - Click Interaction
 
     func hitTest(_ point: CGPoint) -> Bool {
         let hitFrame = CGRect(
@@ -243,6 +252,63 @@ class HuskyNode: SKNode {
             width: 40, height: 50
         )
         return hitFrame.contains(point)
+    }
+
+    /// Handle click on the husky. Returns true if consumed.
+    /// - First clicks: playful response
+    /// - Too many clicks: scared, runs away
+    func handleClick(currentTime: TimeInterval) {
+        // Reset click counter if >5s since last click
+        if currentTime - lastClickTime > 5.0 {
+            clickCount = 0
+        }
+        lastClickTime = currentTime
+        clickCount += 1
+
+        if clickCount >= 3 {
+            // Too much! Scared and run
+            clickCount = 0
+            scare()
+        } else {
+            // Playful response
+            playClickReaction()
+        }
+    }
+
+    private func playClickReaction() {
+        guard behavior != .scared else { return }
+
+        // If sleeping/lying, wake up playfully
+        if behavior == .sleeping || behavior == .lyingDown {
+            wakeUp()
+        }
+
+        behavior = .playing
+        removeAction(forKey: "wander")
+        sprite.removeAllActions()
+        sprite.position = .zero
+        sprite.zRotation = 0
+
+        // Keep current direction, play the playing animation
+        let frames = assets.huskyPlayingFrames()
+        if !frames.isEmpty {
+            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 8.0, resize: false, restore: false)
+            let playLoop = SKAction.repeat(animate, count: Int.random(in: 1...2))
+            sprite.run(SKAction.sequence([playLoop, SKAction.run { [weak self] in
+                self?.transitionToIdle(delay: 2...5)
+            }]))
+        } else {
+            // Fallback: happy bounce
+            let bounce = SKAction.sequence([
+                SKAction.moveBy(x: 0, y: 4, duration: 0.1),
+                SKAction.moveBy(x: 0, y: -4, duration: 0.1),
+                SKAction.moveBy(x: 0, y: 3, duration: 0.1),
+                SKAction.moveBy(x: 0, y: -3, duration: 0.1),
+            ])
+            sprite.run(SKAction.sequence([bounce, SKAction.run { [weak self] in
+                self?.transitionToIdle(delay: 2...5)
+            }]))
+        }
     }
 
     func scare() {
@@ -276,7 +342,7 @@ class HuskyNode: SKNode {
             }
         }
         if !runFrames.isEmpty {
-            sprite.run(SKAction.repeatForever(SKAction.animate(with: runFrames, timePerFrame: 1.0 / 14.0)), withKey: "walkAnim")
+            sprite.run(SKAction.repeatForever(SKAction.animate(with: runFrames, timePerFrame: 1.0 / 14.0, resize: false, restore: false)), withKey: "walkAnim")
         } else {
             startWalkAnimation(direction: dir, speed: 14.0)
         }
@@ -288,13 +354,8 @@ class HuskyNode: SKNode {
         let move = SKAction.move(to: best, duration: TimeInterval(distance / 100))
         move.timingMode = .easeOut
 
-        let scareDir = texDir
-        let scareFlipped = isFlipped
         let done = SKAction.run { [weak self] in
-            // Keep facing the direction we ran -- don't snap to south
-            self?.sprite.removeAllActions()
-            self?.sprite.position = .zero
-            self?.setSpriteDirection(scareDir, flipX: scareFlipped)
+            self?.clearSpriteAnimations()
             self?.behavior = .idle
             self?.idleDuration = 0
             self?.wanderTimer = 0
@@ -344,8 +405,8 @@ class HuskyNode: SKNode {
 
         let frames = assets.huskySittingFrames()
         if !frames.isEmpty {
-            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0)
-            let hold = SKAction.animate(with: [frames.last!], timePerFrame: Double.random(in: 4...10))
+            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0, resize: false, restore: false)
+            let hold = SKAction.animate(with: [frames.last!], timePerFrame: Double.random(in: 4...10), resize: false, restore: false)
             sprite.run(SKAction.sequence([animate, hold, SKAction.run { [weak self] in
                 self?.transitionToIdle(delay: 2...5)
             }]))
@@ -365,15 +426,15 @@ class HuskyNode: SKNode {
         let frames = assets.huskySleepingFrames()
         if !frames.isEmpty {
             // Transition down
-            let lieDown = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0)
+            let lieDown = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0, resize: false, restore: false)
             // Breathe for a while (loop last 4 frames)
             let breathFrames = Array(frames.suffix(4))
             let breathe = SKAction.repeat(
-                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0),
+                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0, resize: false, restore: false),
                 count: Int.random(in: 3...6)
             )
             // Get back up (reverse the transition)
-            let getUp = SKAction.animate(with: frames.reversed(), timePerFrame: 1.0 / 6.0)
+            let getUp = SKAction.animate(with: frames.reversed(), timePerFrame: 1.0 / 6.0, resize: false, restore: false)
             sprite.run(SKAction.sequence([lieDown, breathe, getUp, SKAction.run { [weak self] in
                 self?.transitionToIdle(delay: 2...4)
             }]))
@@ -385,12 +446,14 @@ class HuskyNode: SKNode {
 
     private func startPlaying() {
         behavior = .playing
-        clearSpriteAnimations()
-        setSpriteDirection("south", flipX: false)
+        sprite.removeAllActions()
+        sprite.position = .zero
+        sprite.zRotation = 0
+        // Keep current facing direction -- don't force south
 
         let frames = assets.huskyPlayingFrames()
         if !frames.isEmpty {
-            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 8.0)
+            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 8.0, resize: false, restore: false)
             let playLoop = SKAction.repeat(animate, count: Int.random(in: 2...4))
             sprite.run(SKAction.sequence([playLoop, SKAction.run { [weak self] in
                 self?.transitionToIdle(delay: 3...6)
@@ -447,8 +510,7 @@ class HuskyNode: SKNode {
 
     private func runZoomPath(points: [CGPoint], index: Int) {
         guard index < points.count else {
-            sprite.removeAllActions()
-            sprite.position = .zero
+            clearSpriteAnimations()
             behavior = .idle
             idleDuration = 0
             wanderTimer = 0
@@ -475,7 +537,7 @@ class HuskyNode: SKNode {
         sprite.removeAction(forKey: "walkAnim")
         sprite.removeAction(forKey: "walkBob")
         if !runFrames.isEmpty {
-            sprite.run(SKAction.repeatForever(SKAction.animate(with: runFrames, timePerFrame: 1.0 / 14.0)), withKey: "walkAnim")
+            sprite.run(SKAction.repeatForever(SKAction.animate(with: runFrames, timePerFrame: 1.0 / 14.0, resize: false, restore: false)), withKey: "walkAnim")
         } else {
             let bob = SKAction.sequence([
                 SKAction.moveBy(x: 0, y: 2.0, duration: 0.08),
@@ -595,7 +657,7 @@ class HuskyNode: SKNode {
         }
 
         if !walkFrames.isEmpty {
-            let animate = SKAction.animate(with: walkFrames, timePerFrame: 1.0 / speed)
+            let animate = SKAction.animate(with: walkFrames, timePerFrame: 1.0 / speed, resize: false, restore: false)
             sprite.run(SKAction.repeatForever(animate), withKey: "walkAnim")
         } else {
             // Fallback: hop (no frames for this direction at all)
@@ -618,12 +680,12 @@ class HuskyNode: SKNode {
         let frames = assets.huskySleepingFrames()
         if !frames.isEmpty {
             // Play full transition once (stand -> curl down)
-            let transition = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0)
+            let transition = SKAction.animate(with: frames, timePerFrame: 1.0 / 4.0, resize: false, restore: false)
 
             // Then loop the last 4 frames (breathing while curled) forever
             let breathFrames = Array(frames.suffix(4))
             let breathLoop = SKAction.repeatForever(
-                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0)
+                SKAction.animate(with: breathFrames, timePerFrame: 1.0 / 2.0, resize: false, restore: false)
             )
 
             sprite.run(SKAction.sequence([transition, breathLoop]), withKey: "idle")
@@ -639,7 +701,7 @@ class HuskyNode: SKNode {
     private func playBarkAnimation(completion: @escaping () -> Void) {
         let barkFrames = assets.huskyBarkFrames()
         if !barkFrames.isEmpty {
-            let animate = SKAction.animate(with: barkFrames, timePerFrame: 1.0 / 8.0)
+            let animate = SKAction.animate(with: barkFrames, timePerFrame: 1.0 / 8.0, resize: false, restore: false)
             sprite.run(SKAction.sequence([animate, animate, SKAction.run(completion)]))
         } else {
             let shake = SKAction.sequence([
@@ -656,7 +718,7 @@ class HuskyNode: SKNode {
     private func playDrinkAnimation(completion: @escaping () -> Void) {
         let frames = assets.huskyDrinkingFrames()
         if !frames.isEmpty {
-            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0)
+            let animate = SKAction.animate(with: frames, timePerFrame: 1.0 / 6.0, resize: false, restore: false)
             let drinkLoop = SKAction.repeat(animate, count: 3)
             sprite.run(SKAction.sequence([drinkLoop, SKAction.run(completion)]))
         } else {
@@ -722,5 +784,39 @@ class HuskyNode: SKNode {
         } else {
             return dy > 0 ? "north" : "south"
         }
+    }
+
+    // MARK: - Shadow Texture
+
+    /// Soft radial shadow: black center with alpha fading to transparent edge.
+    private static func makeShadowTexture(resolution: Int) -> SKTexture {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(
+            data: nil, width: resolution, height: resolution,
+            bitsPerComponent: 8, bytesPerRow: resolution * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.clear(CGRect(x: 0, y: 0, width: resolution, height: resolution))
+
+        // Black with alpha gradient: visible center -> transparent edge
+        let colors = [
+            CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.25),
+            CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.0),
+        ] as CFArray
+        let locations: [CGFloat] = [0.0, 1.0]
+        if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: locations) {
+            let center = CGPoint(x: CGFloat(resolution) / 2, y: CGFloat(resolution) / 2)
+            ctx.drawRadialGradient(
+                gradient,
+                startCenter: center, startRadius: 0,
+                endCenter: center, endRadius: CGFloat(resolution) / 2,
+                options: []
+            )
+        }
+
+        let tex = SKTexture(cgImage: ctx.makeImage()!)
+        tex.filteringMode = .linear
+        return tex
     }
 }

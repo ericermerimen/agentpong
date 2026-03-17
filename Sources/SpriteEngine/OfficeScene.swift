@@ -89,9 +89,9 @@ public class OfficeScene: SKScene {
             let pScale = zoneManager.perspectiveScale(for: h.position.y)
             h.setScale(pScale)
 
-            // Shadow tracks husky position independently (not affected by perspective scale)
-            huskyShadow?.position = h.position
+            huskyShadow?.position = CGPoint(x: h.position.x, y: h.position.y - 1)
             huskyShadow?.zPosition = h.zPosition - 0.1
+            huskyShadow?.setScale(pScale)
         }
 
         // Nap timer: if all screens off for 30s, husky goes to bed
@@ -264,9 +264,9 @@ public class OfficeScene: SKScene {
             return
         }
 
-        // Click on husky → scare
+        // Click on husky → playful or scared depending on click frequency
         if let h = husky, h.hitTest(location) {
-            h.scare()
+            h.handleClick(currentTime: lastUpdateTime)
             return
         }
     }
