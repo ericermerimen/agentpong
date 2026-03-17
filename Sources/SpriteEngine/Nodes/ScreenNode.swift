@@ -402,14 +402,12 @@ class ScreenNode: SKNode {
 
     /// Display a decorative texture inside the screen shape, hiding the status color fill.
     ///
-    /// Content is scaled down on side monitors so the icon stays comfortably
-    /// within the trapezoid crop area. No rotation -- the trapezoid crop and
-    /// dark background naturally convey the monitor's perspective.
+    /// Display a scrolling texture inside the screen, tilted to match the monitor angle.
     func showTexture(_ texture: SKTexture) {
         contentSprite?.removeFromParent()
         contentSprite = nil
 
-        // Compute the bounding box of the trapezoid to size the sprite
+        // Bounding box of the trapezoid
         let minX = min(localTopLeft.x, localBottomLeft.x)
         let maxX = max(localTopRight.x, localBottomRight.x)
         let minY = min(localBottomLeft.y, localBottomRight.y)
@@ -418,27 +416,36 @@ class ScreenNode: SKNode {
         let h = maxY - minY
         let centerX = (minX + maxX) / 2
 
-        texture.filteringMode = .nearest  // pixel-crisp
+        // Tilt angle from the top edge of the trapezoid.
+        // Left monitor tilts right, right tilts left, center ~0.
+        let tiltAngle = atan2(
+            localTopRight.y - localTopLeft.y,
+            localTopRight.x - localTopLeft.x
+        )
+
+        texture.filteringMode = .nearest
 
         // Texture is tall (3x screen height) for scrolling.
-        // Show it at screen width, full texture height.
         let texAspect = texture.size().height / texture.size().width
         let spriteW = w * 0.95
         let spriteH = spriteW * texAspect
 
         let sprite = SKSpriteNode(texture: texture, size: CGSize(width: spriteW, height: spriteH))
-        // Start with bottom of texture aligned to bottom of screen
         sprite.anchorPoint = CGPoint(x: 0.5, y: 0.0)
         sprite.position = CGPoint(x: centerX, y: minY)
-        sprite.zPosition = 1  // above screenBg (z:0) within the crop
+        sprite.zRotation = tiltAngle  // match monitor perspective
+        sprite.zPosition = 1
         contentSprite = sprite
         cropNode.addChild(sprite)
 
-        // Slow upward scroll: content scrolls through the crop window
+        // Slow upward scroll through the crop window
         let scrollDistance = spriteH - h
         if scrollDistance > 2 {
-            let scrollDuration = Double.random(in: 20...35)  // slow ambient scroll
-            let scroll = SKAction.moveBy(x: 0, y: scrollDistance, duration: scrollDuration)
+            let scrollDuration = Double.random(in: 20...35)
+            // Scroll along the tilted axis
+            let dx = -sin(tiltAngle) * scrollDistance
+            let dy = cos(tiltAngle) * scrollDistance
+            let scroll = SKAction.moveBy(x: dx, y: dy, duration: scrollDuration)
             let reset = SKAction.move(to: CGPoint(x: centerX, y: minY), duration: 0)
             sprite.run(SKAction.repeatForever(SKAction.sequence([scroll, reset])), withKey: "scroll")
         }

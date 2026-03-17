@@ -94,7 +94,7 @@ final class ScreenTextureGenerator {
                 let indent = Int.random(in: 12...28)
                 let lineLen = Int.random(in: 15...55)
                 let c = colors.randomElement()!
-                let alpha = Double.random(in: 0.40...0.70)
+                let alpha = Double.random(in: 0.55...0.80)
                 ctx.setFillColor(CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: alpha))
                 ctx.fill(CGRect(x: indent, y: y, width: lineLen, height: 2))
 
@@ -114,7 +114,7 @@ final class ScreenTextureGenerator {
         let w = 96, h = 192
         return withContext(w: w, h: h) { ctx in
             for y in stride(from: 3, to: h - 3, by: Int.random(in: 5...7)) {
-                let alpha = Double.random(in: 0.35...0.65)
+                let alpha = Double.random(in: 0.50...0.80)
                 // Prompt
                 ctx.setFillColor(CGColor(srgbRed: 0.25, green: 0.6, blue: 0.3, alpha: alpha))
                 ctx.fill(CGRect(x: 4, y: y, width: 6, height: 2))
@@ -142,7 +142,7 @@ final class ScreenTextureGenerator {
                 let bubbleW = Int.random(in: 25...55)
                 let bubbleH = Int.random(in: 5...10)
                 let x = isLeft ? 6 : w - bubbleW - 6
-                let alpha = Double.random(in: 0.25...0.45)
+                let alpha = Double.random(in: 0.50...0.70)
                 let color = isLeft
                     ? CGColor(srgbRed: 0.2, green: 0.15, blue: 0.3, alpha: alpha)
                     : CGColor(srgbRed: 0.12, green: 0.2, blue: 0.3, alpha: alpha)
@@ -170,7 +170,7 @@ final class ScreenTextureGenerator {
                 let blockW = Int.random(in: 30...75)
                 let blockH = Int.random(in: 2...5)
                 let x = Int.random(in: 4...12)
-                let alpha = Double.random(in: 0.18...0.35)
+                let alpha = Double.random(in: 0.50...0.65)
                 ctx.setFillColor(CGColor(srgbRed: 0.18, green: 0.17, blue: 0.22, alpha: alpha))
                 ctx.fill(CGRect(x: x, y: y, width: blockW, height: blockH))
             }
@@ -189,7 +189,7 @@ final class ScreenTextureGenerator {
                 let startX = (w - barCount * (barW + gap)) / 2
                 for i in 0..<barCount {
                     let barH = Int.random(in: 3...20)
-                    let alpha = Double.random(in: 0.25...0.50)
+                    let alpha = Double.random(in: 0.50...0.75)
                     ctx.setFillColor(CGColor(srgbRed: 0.35, green: 0.25, blue: 0.5, alpha: alpha))
                     ctx.fill(CGRect(x: startX + i * (barW + gap), y: section, width: barW, height: barH))
                 }
@@ -203,7 +203,7 @@ final class ScreenTextureGenerator {
         return withContext(w: w, h: h) { ctx in
             var y = 4
             while y < h - 6 {
-                let alpha = Double.random(in: 0.22...0.40)
+                let alpha = Double.random(in: 0.50...0.70)
                 ctx.setFillColor(CGColor(srgbRed: 0.22, green: 0.18, blue: 0.25, alpha: alpha))
                 ctx.fillEllipse(in: CGRect(x: 4, y: y + 1, width: 5, height: 5))
                 ctx.fill(CGRect(x: 12, y: y + 4, width: Int.random(in: 15...25), height: 2))
