@@ -75,7 +75,85 @@ public final class SpriteAssetLoader {
         animationFrames(prefix: "cat_slow-run", direction: direction)
     }
 
-    /// Load desk texture by index and variant. desk_0.png, desk_0_alt.png, etc.
+    // MARK: - Husky Sprites
+
+    /// Load husky texture for a direction. Sprites at husky/{direction}.png
+    public func huskyTexture(direction: String) -> SKTexture? {
+        texture(named: "husky/\(direction).png")
+            ?? texture(named: "husky/south.png")
+    }
+
+    /// Load husky animation frames for exact direction only.
+    /// Returns empty if no frames for that direction -- caller handles fallback.
+    /// Never substitutes a wrong-direction animation (e.g. south walk for north movement).
+    public func huskyAnimFrames(animation: String, direction: String) -> [SKTexture] {
+        let exact = animationFrames(prefix: "husky/\(animation)", direction: direction)
+        if !exact.isEmpty { return exact }
+
+        // Only fall back to the SAME visual direction:
+        // south-west can use west, south-east can use south, etc.
+        // But NEVER use south frames when moving north.
+        let safeFallbacks: [String: [String]] = [
+            "south": ["south-west", "south-east"],
+            "south-west": ["west", "south"],
+            "south-east": ["south"],
+            "west": ["south-west"],
+            "east": [],           // use west flipped -- handled by caller
+            "north": [],          // no south substitution
+            "north-west": ["west"],
+            "north-east": [],     // use north-west flipped -- handled by caller
+        ]
+        for fb in safeFallbacks[direction] ?? [] {
+            let frames = animationFrames(prefix: "husky/\(animation)", direction: fb)
+            if !frames.isEmpty { return frames }
+        }
+        return []
+    }
+
+    /// Convenience loaders for specific animations.
+    public func huskyWalkFrames(direction: String) -> [SKTexture] {
+        huskyAnimFrames(animation: "walk-6-frames", direction: direction)
+    }
+
+    public func huskyIdleFrames(direction: String = "south") -> [SKTexture] {
+        huskyAnimFrames(animation: "idle", direction: direction)
+    }
+
+    public func huskyBarkFrames() -> [SKTexture] {
+        huskyAnimFrames(animation: "bark", direction: "south")
+    }
+
+    public func huskySneakFrames(direction: String) -> [SKTexture] {
+        huskyAnimFrames(animation: "sneaking", direction: direction)
+    }
+
+    public func huskyRunFrames(direction: String) -> [SKTexture] {
+        huskyAnimFrames(animation: "running-6-frames", direction: direction)
+    }
+
+    public func huskySleepingFrames() -> [SKTexture] {
+        huskyAnimFrames(animation: "husky-sleeping", direction: "south")
+    }
+
+    public func huskyDrinkingFrames() -> [SKTexture] {
+        huskyAnimFrames(animation: "husky-drinking", direction: "south")
+    }
+
+    public func huskyPlayingFrames() -> [SKTexture] {
+        huskyAnimFrames(animation: "husky-playing", direction: "south")
+    }
+
+    public func huskySittingFrames() -> [SKTexture] {
+        huskyAnimFrames(animation: "husky-sitting", direction: "south")
+    }
+
+    public var hasHuskySprites: Bool {
+        texture(named: "husky/south.png") != nil
+    }
+
+    // MARK: - Legacy (kept for backward compat during transition)
+
+    /// Load desk texture by index and variant.
     public func deskTexture(index: Int, variant: Int = 0) -> SKTexture? {
         if variant == 0 {
             return texture(named: "desk_\(index).png")
@@ -84,7 +162,6 @@ public final class SpriteAssetLoader {
         }
     }
 
-    /// Check if real sprites are available
     public var hasCharacterSprites: Bool {
         texture(named: "char_south.png") != nil
     }

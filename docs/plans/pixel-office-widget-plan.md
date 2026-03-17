@@ -1,88 +1,202 @@
-# AgentPong -- macOS Pixel Office App
+# AgentPong -- Cozy Room with Pet & Reactive Screens
 
 ## Overview
 
-A macOS app that displays a pixel art office scene where animated characters represent active Claude Code sessions. Characters walk between zones (desks, lounge, debug station) with smooth 60fps SpriteKit animation. A companion WidgetKit widget provides ambient snapshot views in the widget sidebar.
+A macOS floating window showing a cozy pixel art room where a husky pet wanders around doing pet things. Monitors on the wall/desk react to active Claude Code sessions -- green for running, yellow for needs-input, red for errors. Click a screen to jump to that session or approve permissions. The pet reacts to screen state changes (barks at errors, naps when idle).
 
-**Standalone app** -- no AgentPing dependency required. Has its own built-in Claude Code hook integration.
+**Standalone app** -- no AgentPing dependency. Has its own Claude Code hook integration with real-time event delivery via local HTTP server.
 
-Inspired by [Star-Office-UI](https://github.com/ringhyacinth/Star-Office-UI), [Pixel Agents](https://github.com/pablodelucca/pixel-agents), and [Agent Office](https://github.com/harishkotra/agent-office).
-
-## Key Design Decisions (from CEO Review 2026-03-15)
+## Key Design Decisions
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Primary experience | SpriteKit floating window (60fps) | WidgetKit cannot do continuous animation. Smooth walking requires a game loop. |
-| Secondary experience | WidgetKit widget (snapshot every 60s) | Ambient presence in widget sidebar/desktop. Static snapshot with SwiftUI transitions. |
-| Data source | Built-in session tracker | Standalone -- no AgentPing dependency. Reads `~/.agentpong/sessions/`. Optional AgentPing compat. |
-| Widget data relay | App Group shared UserDefaults | Widget extension is sandboxed, can't read arbitrary paths. Main app relays via App Group. |
-| Sprite source | PixelLab API (characters/animations) + Gemini (backgrounds) | PixelLab excels at consistent pixel art sprites + walk cycles. Gemini excels at themed background scenes. |
-| Office permanence | Always alive, furniture always present | Empty desks with dark monitors when no sessions. Office is a place, not a data visualization. |
-| Desk count | 4 permanent desks | Covers 90% of real usage. Overflow: characters double-up or stand behind desks. |
-| Alive elements | Mascot cat, ambient objects, day/night cycle, progression system | Makes the scene worth looking at even with 0 sessions. |
-| Build order | Floating window first, widget after | Ship the wow-factor (smooth walking) before the ambient view (static widget). |
-| Distribution | Direct download first, App Store later | Avoids sandbox complications. GitHub Releases / DMG. |
+| Primary metaphor | Pet + reactive screens | Simpler than character-per-session. Fewer sprites (~60 vs 130). Actually interactive. |
+| Session visualization | 4 fixed monitor slots (green/yellow/red/dim) | Category-based dashboard, not 1:1 mapping. Scales infinitely. |
+| Pet | Husky (one character, rich animations) | Star of the show. Reacts to session state. Charming with 0 sessions. |
+| Interactivity | Click screens to jump/approve, click pet to play | Real utility, not just eye candy. Permission approval from the widget. |
+| Real-time events | Local HTTP server (HookServer, port 49152) | Instant updates vs 5s polling. Enables permission holding. |
+| Sprite source | PixelLab MCP (husky + monitor sprites) + Gemini (background) | PixelLab MCP tools for consistent sprite sheets. Gemini for atmospheric rooms. |
+| Window | NSPanel floating, always-on-top, draggable | Same as before. SpriteKit 60fps inside. |
 
 ## Architecture
 
 ```
 AgentPong.app
 ├── App/                              # Main app target
-│   ├── AgentPongApp.swift        # @main, app lifecycle
-│   ├── FloatingWindowController.swift # NSPanel always-on-top, draggable
-│   ├── SettingsView.swift            # Theme picker, size, level display
-│   └── MenuBarController.swift       # Tray icon to show/hide window
+│   └── AgentPongApp.swift            # @main, window, menu bar, CLI, HookServer startup
 │
 ├── SpriteEngine/                     # SpriteKit scene (floating window)
-│   ├── OfficeScene.swift             # SKScene, 60fps update loop
+│   ├── OfficeScene.swift             # SKScene, 60fps loop, screen management, click handlers
 │   ├── Nodes/
-│   │   ├── CharacterNode.swift       # Agent sprite + state machine
-│   │   ├── MascotNode.swift          # Permanent cat, autonomous behaviors
-│   │   ├── BubbleNode.swift          # Speech/thought/alert bubbles
-│   │   ├── DeskNode.swift            # Desk + monitor (lit/dark state)
-│   │   └── AmbientNode.swift         # Coffee machine, fan, plants
-│   ├── Pathfinding.swift             # BFS grid navigation
-│   ├── ZoneManager.swift             # Desk/lounge/debug/door zone coords
-│   └── AnimationLibrary.swift        # Sprite sheet frame sequences
+│   │   ├── ScreenNode.swift          # Monitor with color states, count label, glow, click target
+│   │   ├── HuskyNode.swift           # Pet sprite + behaviors + screen reactions
+│   │   ├── BubbleNode.swift          # Permission/info bubbles on screens
+│   │   └── AmbientNode.swift         # Plants, lamp, decorative elements
+│   └── ZoneManager.swift             # Screen positions, pet wander bounds
 │
-├── Widget/                           # WidgetKit extension target
-│   ├── Provider.swift                # TimelineProvider (reads App Group)
-│   ├── WidgetViews.swift             # Small/Medium/Large SwiftUI views
-│   └── SnapshotRenderer.swift        # Core Graphics compositing
+├── Shared/                           # Shared framework
+│   ├── Session.swift                 # Codable model
+│   ├── SessionReader.swift           # Reads ~/.agentpong/sessions/
+│   ├── SessionWriter.swift           # Writes session JSON
+│   ├── HookServer.swift              # Local HTTP server for real-time hook events
+│   ├── HookEvent.swift               # Hook event model + permission decisions
+│   ├── WindowJumper.swift            # Activate session terminal window (ported from AgentsHub)
+│   ├── SpriteAssetLoader.swift       # Load sprites, placeholder fallback
+│   └── ThemeManager.swift            # Background + palette per theme (future)
 │
-├── CLI/                              # Built-in session tracker
-│   └── ReportCommand.swift           # `agentpong report` -- writes session JSON
-│
-└── Shared/                           # Shared framework
-    ├── Session.swift                 # Codable model
-    ├── SessionReader.swift           # Reads ~/.agentpong/sessions/
-    ├── SessionWriter.swift           # Writes session JSON from hook events
-    ├── AppGroupRelay.swift           # Write/read via App Group UserDefaults
-    ├── ProgressionTracker.swift      # Level-up system, task counts
-    ├── ThemeManager.swift            # Background + palette per theme
-    └── SpriteAssetLoader.swift       # Load sprite sheets, fallback to placeholder
+├── Scripts/
+│   └── hook-sender.sh                # stdin→curl bridge for Claude Code hooks
+└── Resources/
+    └── progression-levels.json       # Level thresholds (future)
 ```
 
 ## Data Flow
 
 ```
-Claude Code hooks (SessionStart, Stop, PreToolUse, etc.)
+Claude Code hooks (all events)
     │
     ▼
-agentpong report --session $ID --event $EVENT --status $STATUS
+hook-sender.sh (reads stdin JSON, POSTs to localhost)
     │
     ▼
-~/.agentpong/sessions/SESSION_ID.json
+HookServer (port 49152, loopback only)
     │
-    ├──► Main App (SessionReader) reads directly, polls every 5s
+    ├──► Regular events: SessionWriter writes to disk, immediate 200 OK
     │       │
-    │       ├──► OfficeScene (SpriteKit) -- 60fps character animation
-    │       │
-    │       └──► AppGroupRelay -- writes snapshot to App Group UserDefaults
-    │               │
-    │               └──► Widget Extension (Provider) -- reads every 60s
+    │       └──► OfficeScene.refreshSessions()
+    │               ├──► Group sessions by status
+    │               ├──► Update ScreenNode colors + counts
+    │               └──► Trigger HuskyNode reactions
     │
-    └──► OPTIONAL: also reads ~/.agentping/sessions/ if AgentPing installed
+    └──► Permission events (PreToolUse, permission_mode="ask"):
+            │
+            ├──► Hold HTTP connection open
+            ├──► Show permission bubble on relevant screen
+            ├──► User clicks Allow/Deny
+            └──► Send HookDecision response, unblock hook script
+```
+
+### Backup: File Polling
+
+SessionReader also polls `~/.agentpong/sessions/` every 5s as fallback. This handles:
+- App started after sessions already running
+- Hook server not yet started
+- Optional AgentPing compat (`~/.agentping/sessions/`)
+
+## Screen System
+
+### 4 Fixed Monitor Slots
+
+Screens represent **status categories with counts**, not individual sessions.
+
+```
+SLOT    COLOR     STATUS              SHOWS
+────    ─────     ──────              ─────
+  1     Green     Running             Count of active sessions
+  2     Yellow    Needs input/perms   Count waiting for user
+  3     Red       Error               Count with errors
+  4     Dim/Off   Idle                Count of idle sessions
+```
+
+All 4 monitors are always visible in the room background. When a status has 0 sessions, that monitor is dark/off. When sessions enter that state, the monitor lights up with the corresponding color and shows the count.
+
+### Screen States
+
+```
+  ┌─────┐                    ┌───────┐
+  │ OFF │── sessions > 0 ──► │ GREEN │  steady glow, code scrolling
+  │     │◄── sessions = 0 ──│       │
+  └─────┘                    └───────┘
+
+  ┌────────┐                 ┌───────┐
+  │ YELLOW │  pulsing glow   │  RED  │  flashing
+  └────────┘                 └───────┘
+```
+
+### Click Interaction
+
+```
+USER ACTION           SYSTEM RESPONSE
+──────────────────────────────────────────────
+hover any screen  →   tooltip: session name, status, cwd, cost, context%
+                      (if multiple: list all sessions in that category)
+
+click screen      →   1 session in category → WindowJumper.jumpTo(session)
+                      2+ sessions → show picker tooltip, click to jump
+
+right-click       →   context menu: "Jump to session", "Copy session ID"
+
+permission bubble →   Allow/Deny buttons on yellow screen
+on screen             (replaces character permission bubbles)
+```
+
+### Permission Flow on Screens
+
+When PreToolUse with `permission_mode="ask"` arrives:
+
+1. Yellow screen pulses more urgently
+2. Permission bubble appears near/above the screen: tool name + description
+3. Allow / Deny buttons
+4. Click Allow → HookDecision(allow: true) sent, hook unblocked
+5. Click Deny → HookDecision(allow: false, reason: "denied by user")
+6. Auto-allow after 5 minutes (prevents connection leak)
+
+## Husky Pet
+
+### Core Behaviors (always running)
+
+```
+BEHAVIOR          TRIGGER                  ANIMATION
+────────          ───────                  ─────────
+Wander            Timer (4-12s)            Walk to random point, sniff
+Idle              Between wanders          Breathing, tail wag, look around
+Nap               All screens off (>30s)   Curl up on dog bed, zzz
+Play              Random (low chance)      Chase tail, play with toy
+Drink             Random                   Walk to water bowl, drink
+Scare             User clicks pet          Run to far corner (existing)
+```
+
+### Screen Reactions (session-driven)
+
+```
+SCREEN EVENT        HUSKY REACTION
+────────────        ──────────────
+New yellow screen   Walk toward screen, tilt head, whimper
+New red screen      Bark, run to screen, back away
+All screens green   Play, wag tail, happy bounce
+All screens off     Walk to dog bed, nap
+Session done        Brief celebration (jump, spin)
+```
+
+The pet IS the notification system. It draws your eye to the screen that needs attention.
+
+### Sprite Requirements (PixelLab)
+
+```
+HUSKY ANIMATIONS (PixelLab MCP: create_character + animate_character):
+  Standing (4 directions)         4 sprites
+  Walk cycle (4 dirs x 6 frames)  24 frames
+  Idle: tail wag                  4 frames
+  Idle: head tilt                 4 frames
+  Idle: sniff ground              4 frames
+  Idle: yawn                      4 frames
+  Sleep (curled up)               2 frames
+  Drink water                     4 frames
+  Bark / alert                    4 frames
+  Sit                             2 frames
+  Play (chase tail / toy)         6 frames
+  ──────────────────────────────
+  TOTAL: ~62 frames
+
+MONITOR SPRITES (PixelLab MCP: create_map_object):
+  Monitor off                     1 sprite
+  Monitor green (code)            2 frames (scrolling)
+  Monitor yellow (warning)        2 frames (pulsing)
+  Monitor red (error)             2 frames (flashing)
+  ──────────────────────────────
+  TOTAL: ~7 sprites
+
+GRAND TOTAL: ~70 sprites (vs 130 in old plan)
 ```
 
 ## Session JSON Format
@@ -103,242 +217,148 @@ agentpong report --session $ID --event $EVENT --status $STATUS
 }
 ```
 
-## State Machine (SpriteKit Characters)
+## WindowJumper (ported from AgentsHub)
+
+Handles click-to-jump: activate the terminal window running the Claude session.
 
 ```
-  ┌──────────┐   status changes    ┌──────────┐
-  │  IDLE    │──────────────────────►  WALKING  │
-  │ (lounge) │                      │ (to zone) │
-  │          │◄─────────────────────│          │
-  └──────────┘   arrived            └──────────┘
-       │                                  │
-       │ status == running                │ arrived at desk
-       ▼                                  ▼
-  ┌──────────┐                      ┌──────────┐
-  │ WALKING  │──── arrived ─────────►  WORKING  │
-  │ (to desk)│                      │ (typing)  │
-  └──────────┘                      └──────────┘
-                                         │
-                                         │ status == error
-                                         ▼
-                                    ┌──────────┐
-                                    │ WALKING  │──► ALERTING (! bubble)
-                                    │(to debug) │
-                                    └──────────┘
+LOOKUP PRIORITY:
+  1. Bundle ID match (most reliable)
+  2. App name match
+  3. PID parent walk (find UI process from child PID)
 
-  NEW session  → character fades in at door, walks to assigned zone
-  Session gone → character walks to door, fades out
-  Session gone mid-walk → fade out from current position
+WINDOW CYCLING:
+  - osascript subprocess (TCC workaround)
+  - Cmd+` to cycle windows, match by cwd in title
+  - Ghostty special case: TTY-based tab switching
 
-  IDLE BEHAVIORS (idle >10s):
-    0.3% chance/frame → wander to random nearby point, return
-    Continuous breathing animation
-    Occasional look-around
+SUPPORTED APPS:
+  VS Code, Cursor, Terminal.app, iTerm2, Ghostty, Warp, Alacritty, Kitty, etc.
 ```
 
-## State-to-Zone Mapping
+## Always-Alive Room
 
-| Session Status | Zone | Character Visual |
-|---------------|------|-----------------|
-| running | desk | Sitting at desk, typing animation |
-| idle | lounge | Standing idle, breathing |
-| ready (isFreshIdle) | lounge | Standing with "done!" bubble |
-| needsInput | lounge | Standing with pulsing "?" bubble |
-| error | debug station | Standing with "!" alert bubble |
-| done | door → removed | Walks to door, fades out |
+The room is permanent and cozy. Husky always present. Monitors always visible (dark when no sessions).
 
-## Always-Alive Office
+Room elements:
+- Monitors on wall/desk (4 slots)
+- Dog bed (husky naps here)
+- Water bowl (husky drinks here)
+- Plants, lamp, window with day/night
+- Warm lighting, cozy atmosphere
 
-The office is a permanent space, not a data visualization. All furniture is always present:
-
-```
-┌─────────────────────────────────────────────────────┐
-│  [window]  [poster]                    [server rack] │
-│  day/night                              (debug zone) │
-│                                                      │
-│  [desk1] [desk2] [desk3] [desk4]      [coffee       │
-│                                         machine]     │
-│                                                      │
-│        [sofa / lounge area]            cat (mascot)  │
-│                                                      │
-│  [plant]              [plant]          [door]        │
-└─────────────────────────────────────────────────────┘
-```
-
-- **Empty desks**: dark monitors, empty chairs
-- **Occupied desks**: lit monitors, character typing
-- **Mascot cat**: always present, wanders, naps, watches workers, gets coffee
-- **Ambient objects**: coffee machine steams, monitors flicker, fan spins, clock shows real time
-- **Day/night cycle**: window and lighting tint from system clock
-- **Progression**: office upgrades visually at milestones (total tasks completed)
-
-## Progression System
-
-| Level | Threshold | Visual Change |
-|-------|-----------|--------------|
-| 1 | 0 tasks | Bare startup: folding chairs, one sad plant |
-| 5 | 50 tasks | Proper office: real desks, coffee machine appears |
-| 10 | 200 tasks | Nice office: posters, second plant, better lighting |
-| 20 | 500 tasks | Luxury: aquarium, neon sign, custom theme unlocked |
-
-Tracked in UserDefaults. Persists across sessions.
-
-## Widget Sizes
-
-| Size | Dimensions | Content |
-|------|-----------|---------|
-| Small | 160x160 | Character count + status dots, mini background |
-| Medium | 320x160 | Horizontal strip, characters at zone positions |
-| **Large** | **320x320** | **Full office scene snapshot, primary target** |
-
-Widget shows static snapshot (Core Graphics composited). SwiftUI transitions between timeline entries for smooth state changes.
+Empty room (0 sessions): husky naps, monitors dark, "office is quiet" text. Still charming.
 
 ## Art Pipeline
 
-### Backgrounds: Google AI Studio (Gemini) -- FREE
-1. Create room-skeleton.png (bare room layout with zone markers)
-2. Feed skeleton + prompt to Gemini API for themed backgrounds
-3. Skeleton ensures consistent zone positions across themes
+### Background: Gemini (free)
 
-Prompt template:
+New room design optimized for pet + screens concept:
+
 ```
-Use a top-down pixel room composition compatible with an office game scene.
-STRICTLY preserve the same room geometry, camera angle, wall/floor boundaries
-and major object placement as the provided reference image.
-Keep region layout stable (left work area, center lounge, right debug area).
-Only change visual style/theme/material/lighting according to: [THEME].
-Do not add text or watermark. Retro 8-bit RPG style.
-Dark color palette, nighttime atmosphere, warm lamp lighting.
-Target size: 320x320 pixels.
+Prompt concept:
+"cozy pixel art room, top-down view, warm den/study with 3-4 monitors
+on desk against wall, open floor space, dog bed in corner, water bowl,
+warm lamp lighting, nighttime atmosphere, no characters, retro RPG
+pixel style, 320x320 pixels"
 ```
 
-### Characters & Sprites: PixelLab API (Tier 1, $12/mo)
-- Characters: `POST /create-character-with-4-directions` (32x32 or 48x48)
-- Walk cycles: `POST /animate-character` with template animations
-- Furniture: `POST /map-objects`
-- Style reference feature for consistency across all sprites
-- Generate background + characters in matched style to avoid scale mismatch
+Background rendered as empty room. Monitors baked in as "off" state. SpriteKit overlays colored glows when sessions active.
 
-### Asset Storage
-- NOT checked into git (generated art, potentially paid tools)
-- Git-ignored `Assets/` directory
-- Setup script downloads/generates on first build
-- Or: private assets repo as git submodule
+### Sprites: PixelLab MCP
 
-## User Setup (Standalone)
+Use the PixelLab MCP server tools directly from Claude Code sessions:
 
-```bash
-# 1. Download and install
-# Download AgentPong.dmg from GitHub Releases, drag to /Applications
+1. `mcp__pixellab__create_character` -- husky with 4 directional views
+2. `mcp__pixellab__animate_character` -- walk cycle, idle, sleep, bark, play animations
+3. `mcp__pixellab__create_map_object` -- monitor screen sprites (off/green/yellow/red)
+4. Style reference from first generation used across all subsequent calls
 
-# 2. Register Claude Code hooks
-agentpong setup
-# This registers hooks in ~/.claude/hooks/:
-#   SessionStart  → agentpong report --session $SESSION_ID --event start
-#   Stop          → agentpong report --session $SESSION_ID --event stop
-#   PreToolUse    → agentpong report --session $SESSION_ID --event active
-#   Notification  → agentpong report --session $SESSION_ID --event notify
-
-# 3. Launch app -- floating window appears
-# Characters will appear when Claude Code sessions are active
-```
-
-First-launch onboarding detects no sessions, shows setup instructions in-app.
+No scripts or manual API calls needed. MCP handles auth, retries, and asset download.
 
 ## Phases
 
-### Phase 1: Foundations
-- Swift Package project structure (SPM, no Xcode required yet)
-- Session model + SessionWriter + SessionReader
-- CLI: `agentpong report` command
-- CLI: `agentpong setup` command (registers Claude Code hooks)
-- Floating window shell (NSPanel, always-on-top, draggable, resizable)
-- Empty SpriteKit scene with static background image
-- First-launch onboarding
-- **Ship**: app launches, shows empty office background, setup works
+### Phase 1: Foundations -- DONE
+- [x] SPM project, Session model, SessionReader, SessionWriter
+- [x] CLI: report, setup, status
+- [x] Floating window (borderless, shadow, rounded corners, presets)
+- [x] Menu bar icon, right-click context menu
+- [x] SpriteKit scene with background loading
+- [x] Background generated (Gemini)
+- [x] HookServer (local HTTP, real-time events)
+- [x] HookEvent model + HookDecision
+- [x] hook-sender.sh (stdin->curl bridge)
+- [x] Permission holding (PreToolUse with ask mode)
+- [x] Interactive permission bubbles (Allow/Deny)
+- [x] Hook setup command (writes to ~/.claude/settings.json)
+- [x] 15 tests passing
 
-### Phase 2: Characters Walk
-- CharacterNode with state machine (idle/walking/working/alerting)
-- BFS pathfinding on tile grid
-- ZoneManager (4 desks, lounge, debug station, door)
-- Walk animation (4 directions, 4+ frames each, 12fps)
-- Idle animation (breathing, look-around)
-- Working animation (typing at desk)
-- Session-to-character mapping (hash session ID for stability)
-- Arrival: walk in through door -> assigned zone
-- Departure: walk to door -> fade out
-- State change: walk from current zone -> new zone
-- **Ship**: characters walk smoothly between zones based on session state
+### Phase 2: Screens + Jump -- NEW
+- [ ] ScreenNode (4 fixed monitors, color states, count labels, glow effects)
+- [ ] Session-to-screen mapping (group by status, assign to priority slots)
+- [ ] Screen click handler (hover tooltip, click to jump)
+- [ ] Port WindowJumper from AgentsHub
+- [ ] Migrate permission bubbles from CharacterNode to ScreenNode
+- [ ] Delete CharacterNode, Pathfinding, DeskNode
+- [ ] Rewrite ZoneManager for screen positions + pet bounds
+- [ ] Regenerate Gemini background (cozy room with monitors, dog bed, open floor)
+- [ ] Update SpriteAssetLoader for new sprite categories
 
-### Phase 3: Office Comes Alive
-- MascotNode (cat) with autonomous behaviors (wander, nap, coffee, watch workers)
-- Ambient objects (coffee machine steam, monitor flicker, fan rotation)
-- Day/night cycle (tint overlay from system clock)
-- Speech/thought bubbles ("!", "?", "done!", truncated task description)
-- **Ship**: office feels alive, mascot wanders, ambient animations
+### Phase 3: Husky Pet -- NEW
+- [ ] Generate husky via PixelLab MCP `create_character` (4 dirs)
+- [ ] Generate walk cycle via PixelLab MCP `animate_character`
+- [ ] HuskyNode (adapted from MascotNode) with wander/scare behaviors
+- [ ] Additional PixelLab MCP animations (sleep, drink, bark, play, sit)
+- [ ] Rich idle behaviors (tail wag, head tilt, sniff, yawn)
+- [ ] Dog bed zone (husky naps when all screens off)
+- [ ] Water bowl zone (random drink behavior)
 
-### Phase 4: Widget
-- WidgetKit timeline provider (reads from App Group)
-- SnapshotRenderer (Core Graphics compositing)
-- Large/Medium/Small widget views
-- Widget tap -> opens floating window or specific session
-- **Ship**: widget appears in macOS widget gallery and sidebar
+### Phase 4: Pet-Screen Reactions -- NEW
+- [ ] Husky walks toward yellow/red screens
+- [ ] Bark animation at error screens
+- [ ] Head tilt at yellow screens
+- [ ] Happy bounce when all green
+- [ ] Nap when all screens off for >30s
+- [ ] Celebration on session completion
 
-### Phase 5: Progression & Themes
-- ProgressionTracker (total tasks, sessions, time)
-- Level-up visual milestones (L1 -> L5 -> L10 -> L20)
-- Gemini background generation pipeline
-- Theme pool (cozy night, cyberpunk, forest cabin, space station)
-- Theme switcher (widget configuration intent)
-- **Ship**: users progress, office evolves, multiple themes
+### Phase 5: Themes & Polish
+- [ ] Day/night cycle (window + lighting tint from system clock)
+- [ ] Multiple room themes (Gemini generation pipeline)
+- [ ] Theme switcher in settings
+- [ ] Sound effects (optional, toggleable)
+- [ ] Keyboard shortcuts (show/hide, resize)
+- [ ] PixelLab monitor sprites (replace SpriteKit glow overlays)
 
-### Phase 6: Polish & Delight
-- Character micro-interactions (high-five, chat bubbles between idle chars)
-- Overflow handling (>4 at desks: stand behind, share)
-- Sound effects (optional, toggleable)
-- Keyboard shortcuts (show/hide, resize)
-- Menu bar icon to toggle floating window
+### Phase 6: Progression (Future)
+- [ ] ProgressionTracker (total tasks, sessions, time)
+- [ ] Room upgrades at milestones
+- [ ] Pet accessories / toys
+- [ ] Multiple pets
 
 ## Error Handling
 
 | Failure | Response | User sees |
 |---------|----------|-----------|
-| No sessions directory | Return empty array | Empty alive office |
+| No sessions directory | Return empty array | Cozy room, husky naps, all screens off |
 | Corrupt JSON file | Skip file, log warning | Other sessions OK |
-| App Group not configured | Show setup instructions | "Setup required" in widget |
-| Missing sprite asset | Colored circle placeholder | Degraded but functional |
-| Session disappears mid-walk | Fade out from current position | Character dissolves |
-| >4 running sessions (overflow) | Characters double-up / stand behind desks | Busy office visual |
-| AgentPing not installed | Works fine (standalone) | Normal operation |
+| Missing sprite asset | Colored rectangle placeholder | Degraded but functional |
+| Click jump: PID dead | Show "session ended" tooltip | Brief tooltip then clean up |
+| Click jump: app not found | Show "can't find app" tooltip | Brief tooltip |
+| Hook server port in use | Log warning, fall back to file polling | Normal but no real-time |
+| Permission auto-timeout | Allow after 5 min | Hook unblocked, no user action |
+| >9 sessions same status | Screen shows count as "9+" | Still readable |
 
 ## Not in Scope
 
-- Modifying AgentPing (read-only compat)
+- Character-per-session visualization (old concept, deleted)
+- WidgetKit extension (killed in Phase 4 of old plan)
 - iOS/iPadOS version
-- Multi-monitor support
+- Multiple pets (future Phase 6)
+- CI/deploy screen integration (future)
 - Community theme marketplace (future)
-- Character customization editor (future)
-- Live Activities / Dynamic Island (future macOS)
-
-## Competitive Landscape
-
-| Feature | Star-Office-UI | Pixel Agents | Agent Office | AgentPong |
-|---------|---------------|-------------|-------------|---------------|
-| Platform | Web + Tauri | VS Code ext | Web | macOS native |
-| Walking | No (web) / 4fr (Tauri) | Yes (BFS) | Yes (tween) | Yes (SpriteKit) |
-| Smooth | Jumpy | Decent | Smooth | Target: smooth |
-| Always alive | No | No | Yes (autonomous) | Yes (mascot + ambient) |
-| Progression | No | No | No | Yes (level-up) |
-| Standalone | Needs backend | Needs VS Code | Needs server | Standalone app |
-| Widget | No | No | No | Yes (WidgetKit) |
 
 ## References
 
-- [Star-Office-UI](https://github.com/ringhyacinth/Star-Office-UI) -- inspiration, Gemini prompt, architecture reference
-- [Pixel Agents](https://github.com/pablodelucca/pixel-agents) -- VS Code extension, BFS pathfinding, office editor
-- [Agent Office](https://github.com/harishkotra/agent-office) -- Phaser.js, tween interpolation, autonomous agents
-- [PixelLab API](https://api.pixellab.ai/v2/llms.txt) -- sprite generation (Tier 1, $12/mo)
-- [Google AI Studio](https://aistudio.google.com/) -- Gemini background generation (free)
-- [LimeZu Modern Interiors](https://limezu.itch.io/moderninteriors) -- reference sprite style
-- Apple WidgetKit docs -- animation limitations, timeline providers
-- Apple SpriteKit docs -- game loop, sprite nodes, pathfinding
+- [AgentsHub](../../../agentshub/) -- WindowJumper code, session model patterns
+- PixelLab MCP server -- `mcp__pixellab__*` tools for character, animation, and map object generation
+- [Google AI Studio](https://aistudio.google.com/) -- Gemini background generation

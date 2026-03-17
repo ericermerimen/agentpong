@@ -1,6 +1,6 @@
 # Pixel Art Sizing Strategy & Asset Generation Guide
 
-Production-grade sizing plan for 320x320 macOS widget + Retina + SpriteKit 60fps.
+Production-grade sizing plan for 320x320 macOS floating window + Retina + SpriteKit 60fps.
 
 ## 1. Pixel Grid
 
@@ -14,206 +14,122 @@ Production-grade sizing plan for 320x320 macOS widget + Retina + SpriteKit 60fps
 **Why 16px tiles:**
 - Pixel perfect: 320 / 16 = 20 tiles
 - Good density for detail
-- Easy BFS pathfinding
-- Retina friendly (2x scaling)
+- Retina friendly (2x scaling via `.nearest` filtering)
 
 ## 2. Retina Scaling Strategy
 
-PixelLab Tier 1 max: **320x320**. So we author at native 320x320.
+Author all sprites at native resolution. SpriteKit `filteringMode = .nearest` ensures pixel-crisp on Retina displays. This is standard for pixel games.
 
-**Workflow:**
-- Author all sprites at **16px tiles** (native)
-- Scene size: 320x320
-- SpriteKit `filteringMode = .nearest` ensures pixel-crisp on Retina
-- This is how every classic pixel game works -- no blur, sharp pixels at any display scale
+```swift
+scene.size = CGSize(width: 320, height: 320)
+scene.scaleMode = .aspectFit
+texture.filteringMode = .nearest  // pixel-crisp, no blur
+```
 
-**Alternative (if needed later):** Generate 32x32 tiles individually, stitch into 640x640 via script. Not needed for now.
-
-## 3. Scene Tile Layout (20 x 20)
+## 3. Scene Layout (Cozy Room)
 
 ```
-WWWWWWWWWWWWWWWWWWWW
-W....window......SW
-W................SW
-W..DD..DD..DD..DD.W    <- desk row (y: 3-4)
-W..DD..DD..DD..DD.W
-W.................W
-W......sofa.......W    <- lounge (y: 6)
-W.................W
-W....plant..plant.W    <- plants (y: 8)
-W..............door    <- door (y: 9, right side)
-WWWWWWWWWWWWWWWWWWWW
-
-W = wall, D = desk, S = server rack
+┌──────────────────────────────────────┐
+│  [window]     [lamp]                 │  <- wall with window, day/night
+│                                      │
+│  [monitor1] [monitor2]  [monitor3]   │  <- desk with 3 monitors
+│  ─────────desk surface──────────     │
+│                                      │
+│          [open floor]     [monitor4] │  <- side monitor / server
+│                                      │
+│     husky wanders here               │
+│                                      │
+│  [dog bed]    [water bowl]  [plant]  │  <- pet zones
+│                                      │
+└──────────────────────────────────────┘
 ```
 
 Zone mapping:
 - y 0-3: top wall + window
-- y 3-5: desk row (4 desks)
-- y 5-7: lounge (sofa area)
-- y 7-9: door + plants + floor
+- y 3-5: desk row with monitors
+- y 5-8: open floor (husky wander area)
+- y 8-10: pet zones (dog bed, water bowl) + plants
 
-## 4. PixelLab Asset Generation List
+## 4. PixelLab MCP Asset Generation
 
-Generate in this order. All use same style reference.
+Generate via PixelLab MCP tools. All use same style reference for consistency.
 
-### Style Reference Prompt (generate FIRST)
+### Style Reference (generate FIRST)
+
+Use `mcp__pixellab__create_character` with description:
 ```
-cozy pixel office environment
-top-down perspective
+cozy pixel art style
 warm lighting
-retro RPG pixel style
+retro RPG aesthetic
 stardew valley inspired
 dark nighttime atmosphere
 ```
-Pass `style_reference_id` to all subsequent requests.
+Pass the resulting style reference to ALL subsequent calls.
 
-### A. Tile Set (~15 tiles, 32x32 each)
-```
-floor_wood_1
-floor_wood_2
-floor_wood_shadow
-wall_top
-wall_left
-wall_right
-wall_corner
-window_night
-window_day
-lamp_light
-carpet_tile
-door_frame_tile
-```
+### A. Husky Character
 
-### B. Desk Set (64x32)
-```
-desk_empty
-desk_with_monitor_off
-desk_with_monitor_on
-desk_typing
-desk_with_keyboard
-```
-
-### C. Office Chair (32x32)
-```
-chair_front
-chair_back
-chair_left
-chair_right
-chair_spin_animation
-```
-
-### D. Coffee Machine (32x32)
-```
-coffee_idle
-coffee_brew
-coffee_ready
-coffee_steam
-```
-
-### E. Server Rack (32x48)
-```
-server_idle
-server_processing
-server_error
-server_fixing
-server_overheat
-```
-
-### F. Sofa (64x32)
-```
-sofa_empty
-sofa_sit_left
-sofa_sit_right
-```
-
-### G. Plants (32x32)
-```
-plant_small
-plant_big
-plant_shadow
-```
-
-### H. Door (32x48)
-```
-door_closed
-door_open
-door_half
-door_glow_night
-```
-
-Prompt tip: "strong contrast from wall, visible door frame, pixel shadow on floor"
-
-### I. Monitor Screen States (24x16)
-```
-monitor_off
-monitor_code
-monitor_terminal
-monitor_social
-monitor_video
-monitor_error
-monitor_success
-```
-
-### J. Character Sprite Sheet (32x32)
-
-Use PixelLab: `POST /create-character-with-4-directions`
+**Tool:** `mcp__pixellab__create_character` (4 directional views)
 
 ```
-Directions: up/down/left/right
-Walk: 6 frames per direction
-Idle: 4 frames
-Typing: animation
-Sitting: animation
+Description: cute husky dog, fluffy, grey and white fur,
+blue eyes, friendly expression, pixel art style
 ```
 
-States needed:
-```
-walk
-idle
-typing
-debugging
-alert
-celebrate
-```
+Directions: north, south, east, west (west = flipped east)
+Size: 32x32 per direction
 
-### K. Mascot Cat (24x24)
-```
-cat_idle
-cat_walk (4 dirs)
-cat_sleep
-cat_jump_desk
-cat_tail_wag
-cat_drink_coffee
-```
+### B. Husky Animations
 
-### L. Speech Bubbles (16x16)
-```
-bubble_question
-bubble_alert
-bubble_done
-bubble_typing
-bubble_sleep
-```
+**Tool:** `mcp__pixellab__animate_character`
 
-### M. Ambient Objects
+| Animation | Frames | Notes |
+|---|---|---|
+| Walk (4 dirs) | 6 each | Main movement |
+| Idle: tail wag | 4 | Subtle, looping |
+| Idle: head tilt | 4 | Curiosity reaction |
+| Idle: sniff ground | 4 | Random behavior |
+| Idle: yawn | 4 | Sleepy behavior |
+| Sleep | 2 | Curled up, zzz |
+| Drink water | 4 | At bowl |
+| Bark / alert | 4 | Error reaction |
+| Sit | 2 | Resting pose |
+| Play | 6 | Chase tail / toy |
 
-Fan (32x32): 4 rotation frames
-Clock (16x16): day/night/tick
-Lamp glow overlay: small/large
+### C. Monitor Sprites
+
+**Tool:** `mcp__pixellab__create_map_object`
+
+| Sprite | Size | Notes |
+|---|---|---|
+| monitor_off | 24x20 | Dark screen, powered off |
+| monitor_green | 24x20 | Code/terminal, green tint |
+| monitor_green_2 | 24x20 | Alt frame for scrolling effect |
+| monitor_yellow | 24x20 | Warning, yellow tint |
+| monitor_yellow_2 | 24x20 | Alt frame for pulse |
+| monitor_red | 24x20 | Error, red tint |
+| monitor_red_2 | 24x20 | Alt frame for flash |
+
+### D. Room Objects (optional, can be baked into Gemini background)
+
+| Object | Size | Tool |
+|---|---|---|
+| dog_bed | 32x24 | create_map_object |
+| water_bowl | 16x12 | create_map_object |
+| plant_small | 16x24 | create_map_object |
+| lamp | 16x24 | create_map_object |
 
 ## 5. Total Asset Count
 
 | Category | Count |
 |---|---|
-| Tiles | ~15 |
-| Furniture | ~25 |
-| Interactive objects | ~20 |
-| Character frames | ~40 |
-| Cat frames | ~20 |
-| UI elements | ~10 |
-| **TOTAL** | **~130 sprites** |
+| Husky standing (4 dirs) | 4 |
+| Husky walk frames | 24 |
+| Husky behavior frames | 30 |
+| Monitor sprites | 7 |
+| Room objects (optional) | 4 |
+| **TOTAL** | **~70 sprites** |
 
-Normal for pixel games.
+Down from ~130 in the old character-per-session plan.
 
 ## 6. SpriteKit Configuration
 
@@ -222,166 +138,56 @@ Normal for pixel games.
 scene.size = CGSize(width: 320, height: 320)
 scene.scaleMode = .aspectFit
 
-// Tiles
-let tileSize: CGFloat = 16  // native authored size
+// Husky
+huskyNode.size = CGSize(width: 32, height: 32)
 
-// Characters
-characterNode.size = CGSize(width: 16, height: 16)
+// Monitors (screen overlays on background)
+screenNode.size = CGSize(width: 24, height: 20)
 
-// Textures -- CRITICAL for pixel art
-texture.filteringMode = .nearest  // no blur, pixel-crisp on Retina
+// CRITICAL for pixel art
+texture.filteringMode = .nearest
 ```
 
-## 7. Character Interaction Triggers
+## 7. Gemini Background Prompt
 
-Tile-based interaction:
-- Desk tile -> typing state
-- Sofa tile -> sit state
-- Coffee tile -> drink animation
-- Server tile -> debug animation
-- Distance threshold: < 1 tile
-
-## 8. Fun Addictive Features
-
-### Deploy Chaos
-Random event: `production_error`. Character runs to server.
-
-### Cat Sabotage
-Cat randomly: `sit_on_keyboard`, `disconnect_network`, `steal_coffee`
-
-### Late Night Mode
-After midnight: lights dim, characters slower, cat sleeps
-
-### Friday Deploy
-Random event: "Deploy Friday?" If accepted: server explosion animation
-
-## 9. PixelLab Consistency Tips
-
-1. Generate style reference FIRST
-2. Pass `style_reference_id` to ALL subsequent requests
-3. Use same view/outline/shading/detail across everything
-4. Generate related assets in same session
-
-Settings for all assets:
-```json
-{
-  "view": "low top-down",
-  "outline": "single color outline",
-  "shading": "medium shading",
-  "detail": "medium detail"
-}
-```
-
-## 10. Production Pipeline: Gemini + PixelLab Hybrid
-
-**Confirmed approach** (from external API consultation):
-
-PixelLab alone will NOT match Gemini's rich atmospheric quality. The correct pipeline:
+New room optimized for pet + screens concept:
 
 ```
-Gemini → background scene (lighting, atmosphere, room shell)
-PixelLab → sprites / objects / characters (consistent pixel grid, animation frames)
-```
-
-### Why this split works
-
-| Tool | Strength | Weakness |
-|---|---|---|
-| Gemini | Lighting gradients, atmospheric shadows, cohesive scene composition, decorative details | Can't do consistent sprite sheets or animations |
-| PixelLab | Consistent pixel grids, sprite sheets, animation frames, object reuse | Produces simpler "Stardew Valley" look, less atmospheric |
-
-### Expected quality match to Gemini concept art
-
-| Element | Similarity |
-|---|---|
-| Lighting | 90% |
-| Furniture | 80% |
-| Atmosphere | 90% |
-| Layout | 100% |
-| Pixel style | 85-95% |
-
-PixelLab objects will be slightly simpler than Gemini concept art. That's actually good for games (cleaner sprites, better at small sizes).
-
-### CRITICAL: Style Reference Trick
-
-To keep PixelLab assets matching the Gemini background:
-
-1. Generate a **style reference** first:
-```
-top-down cozy pixel office
-warm night lighting
-wood furniture
-indoor plants
-retro RPG pixel art
-stardew valley style
-```
-
-2. Feed that `style_reference_id` to EVERY PixelLab asset request
-3. This forces: same palette, same shading, same lighting direction
-4. Without this, assets WILL look mismatched
-
-### Clean Gemini Background Prompt
-
-The Gemini background must be EMPTY (no baked furniture):
-
-```
-top-down pixel art office room
-empty room layout
-wood floor
-walls with window
-warm ceiling lamp lighting
-no furniture, no characters, no desks, no chairs
-only room structure
-retro 8-bit cozy pixel style
+top-down pixel art cozy room
+warm den/study atmosphere
+desk against top wall with 3-4 monitor outlines (dark/off screens)
+open floor space in center for a pet to walk
+dog bed in bottom-left corner
+water bowl near dog bed
+small plant in corner
+warm ceiling lamp with glow
+window on wall showing night sky
+wood floor, warm colors
+no characters, no pets, no text
+retro 8-bit RPG pixel style
 320x320 pixels
 ```
 
-Then all furniture = PixelLab sprites placed by SpriteKit.
+Important: monitors should be baked into background as "off" state. SpriteKit overlays colored glow sprites on top when sessions are active.
 
-### Monitor Screen Ideas
+## 8. Style Consistency Tips
 
-Since the app tracks Claude sessions, monitors could show:
-- Terminal scrolling animation
-- Claude logo
-- Git commit progress
-- Deploy progress bar
-- Error screen (red)
-- Success screen (green)
+1. Generate PixelLab style reference FIRST from a warm cozy pixel art prompt
+2. Pass `style_reference_id` to ALL subsequent PixelLab MCP calls
+3. Match palette warmth between Gemini background and PixelLab sprites
+4. Use same view angle (top-down / low top-down) for all assets
+5. Test sprite placement on background before generating full set
 
-This makes the office feel like live developer activity.
+## 9. SpriteKit Animation Pattern
 
-### The Cat is the Killer Feature
-
-The mascot cat is what makes users watch even with 0 sessions:
-- Sleeping on sofa
-- Walking across desks
-- Blocking keyboard (sits on it)
-- Drinking coffee
-- Watching workers type
-
-Key to stickiness.
-
-### SpriteKit Animation Trick
-
-Animate characters at 60fps while only using 12fps sprite frames:
-- SpriteKit runs at 60fps game loop
-- Character sprite frames change at 12fps (every 5 game frames)
-- Movement interpolation at 60fps (smooth walking)
-- Result: crispy sprite animation + butter-smooth movement
+Animate husky at 60fps while using 12fps sprite frames:
 
 ```swift
 // 12fps sprite animation inside 60fps game loop
-let walkFrames: [SKTexture] = [...]  // 4-6 frames
+let walkFrames: [SKTexture] = [...]  // 6 frames
 let animateSprite = SKAction.animate(with: walkFrames, timePerFrame: 1.0/12.0)
 character.run(SKAction.repeatForever(animateSprite))
 // Movement is separate, runs at 60fps via SKAction.move
 ```
 
-## 11. Remaining TODO from External Review
-
-Three things offered that would be valuable:
-1. **Exact 20x20 tile coordinate layout** -- so pathfinding works perfectly and characters never clip furniture
-2. **Complete PixelLab asset generation script** (~30 API calls) -- auto-builds the whole sprite pack
-3. **60fps/12fps animation implementation** -- the SpriteKit trick described above
-
-These should be built in the next session once art approach is confirmed.
+This gives crispy sprite animation + butter-smooth movement.

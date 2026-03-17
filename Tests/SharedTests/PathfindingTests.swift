@@ -2,94 +2,50 @@ import Testing
 @testable import SpriteEngine
 @testable import Shared
 
-@Suite("Pathfinding")
-struct PathfindingTests {
-
-    @Test("Simple path on empty grid")
-    func simplePath() {
-        let pf = Pathfinder(width: 10, height: 10)
-        let path = pf.findPath(from: GridPos(0, 0), to: GridPos(3, 3))
-        #expect(path != nil)
-        #expect(path?.first == GridPos(0, 0))
-        #expect(path?.last == GridPos(3, 3))
-        #expect(path?.count == 7)
-    }
-
-    @Test("Path to same position")
-    func samePosition() {
-        let pf = Pathfinder(width: 10, height: 10)
-        let path = pf.findPath(from: GridPos(5, 5), to: GridPos(5, 5))
-        #expect(path != nil)
-        #expect(path?.count == 1)
-    }
-
-    @Test("GridPos scene coordinate conversion")
-    func sceneConversion() {
-        let pos = GridPos(3, 5)
-        let scene = pos.toScene(tileSize: 16.0)
-        #expect(scene.x == 56.0)
-        #expect(scene.y == 88.0)
-        let back = GridPos.fromScene(scene, tileSize: 16.0)
-        #expect(back == pos)
-    }
-
-    @Test("Manhattan distance")
-    func distance() {
-        #expect(GridPos(0, 0).distance(to: GridPos(3, 4)) == 7)
-    }
-}
-
 @Suite("ZoneManager")
 struct ZoneManagerTests {
 
-    @Test("Desk positions are within scene bounds")
-    func deskBounds() {
+    @Test("Monitor position is within scene bounds")
+    func monitorBounds() {
         let zm = ZoneManager()
-        for pos in zm.deskPositions {
-            #expect(pos.x >= 0 && pos.x <= zm.sceneWidth)
-            #expect(pos.y >= 0 && pos.y <= zm.sceneHeight)
-        }
+        let pos = zm.monitorCenter
+        #expect(pos.x >= 0 && pos.x <= zm.sceneWidth)
+        #expect(pos.y >= 0 && pos.y <= zm.sceneHeight)
     }
 
-    @Test("Lounge positions are within scene bounds")
-    func loungeBounds() {
+    @Test("Monitor is in upper half of scene (desk area)")
+    func monitorInUpperHalf() {
         let zm = ZoneManager()
-        for pos in zm.loungePositions {
-            #expect(pos.x >= 0 && pos.x <= zm.sceneWidth)
-            #expect(pos.y >= 0 && pos.y <= zm.sceneHeight)
-        }
+        #expect(zm.monitorCenter.y > zm.sceneHeight / 2)
     }
 
-    @Test("Zone assignment is stable for same session ID")
-    func stableAssignment() {
+    @Test("Walkable area is within scene bounds")
+    func walkableBounds() {
         let zm = ZoneManager()
-        let id = "test-session-123"
-        let desk1 = zm.deskForSession(id)
-        let desk2 = zm.deskForSession(id)
-        #expect(desk1 == desk2)
+        let area = zm.walkableArea
+        #expect(area.minX >= 0)
+        #expect(area.minY >= 0)
+        #expect(area.maxX <= zm.sceneWidth)
+        #expect(area.maxY <= zm.sceneHeight)
     }
 
-    @Test("Target positions for all zones")
-    func targetPositions() {
+    @Test("Dog bed is in lower area of scene")
+    func dogBedPosition() {
         let zm = ZoneManager()
-        let id = "test"
-        let desk = zm.targetPosition(zone: .desk, sessionId: id)
-        let lounge = zm.targetPosition(zone: .lounge, sessionId: id)
-        let debug = zm.targetPosition(zone: .debugStation, sessionId: id)
-        let door = zm.targetPosition(zone: .door, sessionId: id)
+        #expect(zm.dogBedPosition.y < zm.sceneHeight / 3)
+    }
 
-        // All should be within or near scene bounds (door can be off-screen)
-        for pos in [desk, lounge, debug] {
-            #expect(pos.x >= 0 && pos.x <= 320)
-            #expect(pos.y >= 0 && pos.y <= 320)
-        }
+    @Test("Floor center is within walkable area")
+    func floorCenterInWalkable() {
+        let zm = ZoneManager()
+        let center = zm.floorCenter
+        let area = zm.walkableArea
+        #expect(area.contains(center))
+    }
 
-        // Debug should be near right side (server rack area)
-        #expect(debug.x > 150)
-        #expect(debug.y > 100)
-
-        // Door is at bottom-center (can be slightly off-screen for walk-in effect)
-        #expect(door.y < 10)  // near or below bottom edge
-        #expect(door.x > 100 && door.x < 220)  // center area
+    @Test("Door position is below scene (off-screen)")
+    func doorOffScreen() {
+        let zm = ZoneManager()
+        #expect(zm.doorPosition.y < 0)
     }
 }
