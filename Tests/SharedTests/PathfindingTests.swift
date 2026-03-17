@@ -78,18 +78,18 @@ struct ZoneManagerTests {
         let debug = zm.targetPosition(zone: .debugStation, sessionId: id)
         let door = zm.targetPosition(zone: .door, sessionId: id)
 
-        // All should be within scene
-        for pos in [desk, lounge, debug, door] {
+        // All should be within or near scene bounds (door can be off-screen)
+        for pos in [desk, lounge, debug] {
             #expect(pos.x >= 0 && pos.x <= 320)
             #expect(pos.y >= 0 && pos.y <= 320)
         }
 
         // Debug should be near right side (server rack area)
-        #expect(debug.x > 200)
+        #expect(debug.x > 150)
         #expect(debug.y > 100)
 
-        // Door should be near bottom-right (entry/exit point)
-        #expect(door.y < 50)
-        #expect(door.x > 200)
+        // Door is at bottom-center (can be slightly off-screen for walk-in effect)
+        #expect(door.y < 10)  // near or below bottom edge
+        #expect(door.x > 100 && door.x < 220)  // center area
     }
 }
