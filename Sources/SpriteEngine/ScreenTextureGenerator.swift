@@ -299,55 +299,59 @@ final class ScreenTextureGenerator {
         }
     }
 
-    /// Very faint code-like horizontal lines
+    /// Dim code-like horizontal lines
     private func generateCodeDim() -> CGImage? {
         let s = 64
         return withContext(w: s, h: s) { ctx in
-            for y in stride(from: 3, to: s - 3, by: Int.random(in: 5...7)) {
-                let lineLen = Int.random(in: 10...40)
-                let indent = Int.random(in: 4...15)
-                let alpha = Double.random(in: 0.10...0.20)
-                ctx.setFillColor(CGColor(srgbRed: 0.3, green: 0.35, blue: 0.5, alpha: alpha))
+            for y in stride(from: 3, to: s - 3, by: Int.random(in: 4...6)) {
+                let lineLen = Int.random(in: 12...44)
+                let indent = Int.random(in: 4...14)
+                let alpha = Double.random(in: 0.30...0.55)
+                let colors: [(r: Double, g: Double, b: Double)] = [
+                    (0.35, 0.45, 0.65), (0.5, 0.4, 0.55), (0.35, 0.5, 0.4),
+                ]
+                let c = colors.randomElement()!
+                ctx.setFillColor(CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: alpha))
                 ctx.fill(CGRect(x: indent, y: y, width: lineLen, height: 2))
             }
         }
     }
 
-    /// Very faint horizontal scan lines
+    /// Dim horizontal scan lines
     private func generateLinesDim() -> CGImage? {
         let s = 64
         return withContext(w: s, h: s) { ctx in
-            for y in stride(from: 2, to: s - 2, by: 4) {
-                let alpha = Double.random(in: 0.06...0.14)
-                ctx.setFillColor(CGColor(srgbRed: 0.2, green: 0.2, blue: 0.25, alpha: alpha))
+            for y in stride(from: 2, to: s - 2, by: 3) {
+                let alpha = Double.random(in: 0.15...0.35)
+                ctx.setFillColor(CGColor(srgbRed: 0.25, green: 0.28, blue: 0.35, alpha: alpha))
                 ctx.fill(CGRect(x: 3, y: y, width: s - 6, height: 1))
             }
         }
     }
 
-    /// Very faint vertical bars (like a tiny visualizer)
+    /// Dim vertical bars (like a tiny visualizer)
     private func generateBarsDim() -> CGImage? {
         let s = 64
         return withContext(w: s, h: s) { ctx in
-            let barW = 3
-            for x in stride(from: 6, to: s - 6, by: barW + 2) {
-                let barH = Int.random(in: 5...25)
-                let alpha = Double.random(in: 0.08...0.18)
-                ctx.setFillColor(CGColor(srgbRed: 0.25, green: 0.2, blue: 0.35, alpha: alpha))
+            let barW = 4
+            for x in stride(from: 5, to: s - 5, by: barW + 2) {
+                let barH = Int.random(in: 6...30)
+                let alpha = Double.random(in: 0.25...0.45)
+                ctx.setFillColor(CGColor(srgbRed: 0.3, green: 0.25, blue: 0.45, alpha: alpha))
                 ctx.fill(CGRect(x: x, y: 4, width: barW, height: barH))
             }
         }
     }
 
-    /// Very faint scattered dots / pixels
+    /// Dim scattered dots / pixels
     private func generateDotsDim() -> CGImage? {
         let s = 64
         return withContext(w: s, h: s) { ctx in
-            for _ in 0..<30 {
-                let x = Int.random(in: 4...s-4)
-                let y = Int.random(in: 4...s-4)
-                let alpha = Double.random(in: 0.08...0.20)
-                ctx.setFillColor(CGColor(srgbRed: 0.2, green: 0.2, blue: 0.28, alpha: alpha))
+            for _ in 0..<50 {
+                let x = Int.random(in: 3...s-3)
+                let y = Int.random(in: 3...s-3)
+                let alpha = Double.random(in: 0.20...0.45)
+                ctx.setFillColor(CGColor(srgbRed: 0.28, green: 0.28, blue: 0.38, alpha: alpha))
                 ctx.fill(CGRect(x: x, y: y, width: 2, height: 2))
             }
         }
