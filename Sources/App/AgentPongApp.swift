@@ -1,0 +1,478 @@
+import AppKit
+import SpriteKit
+import SpriteEngine
+import Shared
+
+// MARK: - Window Size Presets
+
+enum WindowPreset: String, CaseIterable {
+    case small = "Small"
+    case large = "Large"
+
+    var size: NSSize {
+        switch self {
+        case .small: return NSSize(width: 170, height: 170)
+        case .large: return NSSize(width: 364, height: 382)
+        }
+    }
+}
+
+// MARK: - Borderless Floating Panel
+
+class BorderlessPanel: NSPanel {
+    private var hoverOverlay: NSView?
+    private var trackingArea: NSTrackingArea?
+    weak var floatController: FloatingWindowController?
+
+    override var canBecomeKey: Bool { true }
+
+    func setupHoverControls() {
+        guard let contentView = contentView else { return }
+
+        // Subtle top overlay that appears on hover
+        let overlay = NSView(frame: NSRect(x: 0, y: contentView.bounds.height - 24, width: contentView.bounds.width, height: 24))
+        overlay.autoresizingMask = [.width, .minYMargin]
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = NSColor(white: 0, alpha: 0.4).cgColor
+        overlay.layer?.cornerRadius = 12
+        overlay.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        overlay.alphaValue = 0
+        contentView.addSubview(overlay)
+        hoverOverlay = overlay
+
+        // Close button (left)
+        let close = NSButton(frame: NSRect(x: 6, y: 2, width: 20, height: 20))
+        close.bezelStyle = .circular
+        close.title = ""
+        close.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")
+        close.imagePosition = .imageOnly
+        close.isBordered = false
+        close.contentTintColor = NSColor(white: 0.6, alpha: 1.0)
+        close.target = self
+        close.action = #selector(closePanel)
+        overlay.addSubview(close)
+
+        // Setup tracking area for hover
+        let area = NSTrackingArea(
+            rect: contentView.bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        contentView.addTrackingArea(area)
+        trackingArea = area
+    }
+
+    func buildContextMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        // Size presets
+        for preset in WindowPreset.allCases {
+            let item = NSMenuItem(title: preset.rawValue, action: #selector(setSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset
+            if preset == (floatController?.currentPreset ?? .small) {
+                item.state = .on
+            }
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Hide", action: #selector(closePanel), keyEquivalent: ""))
+        menu.items.last?.target = self
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: ""))
+        menu.items.last?.target = self
+
+        return menu
+    }
+
+    @objc private func closePanel() {
+        orderOut(nil)
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+
+    @objc private func setSize(_ sender: NSMenuItem) {
+        guard let preset = sender.representedObject as? WindowPreset else { return }
+        floatController?.setPreset(preset)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            hoverOverlay?.animator().alphaValue = 1.0
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.25
+            hoverOverlay?.animator().alphaValue = 0
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = buildContextMenu()
+        NSMenu.popUpContextMenu(menu, with: event, for: contentView!)
+    }
+}
+
+// MARK: - Floating Window Controller
+
+/// Custom SKView that enables mouse tracking for hover tooltips
+class TrackingSKView: SKView {
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        scene?.mouseMoved(with: event)
+    }
+}
+
+class FloatingWindowController {
+    private var window: BorderlessPanel?
+    private var skView: SKView?
+    var currentPreset: WindowPreset = .small
+
+    private let shadowPad: CGFloat = 16
+
+    func showWindow() {
+        if window != nil {
+            window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        rebuildWindow()
+    }
+
+    private func rebuildWindow() {
+        window?.orderOut(nil)
+        window = nil
+        skView = nil
+
+        let preset = currentPreset
+        let totalSize = NSSize(
+            width: preset.size.width + shadowPad * 2,
+            height: preset.size.height + shadowPad * 2
+        )
+
+        let panel = BorderlessPanel(
+            contentRect: NSRect(origin: .zero, size: totalSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isMovableByWindowBackground = true
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.floatController = self
+
+        // Container
+        let container = NSView(frame: NSRect(origin: .zero, size: totalSize))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
+
+        // Inner view with floating shadow
+        let innerFrame = NSRect(x: shadowPad, y: shadowPad, width: preset.size.width, height: preset.size.height)
+        let innerView = NSView(frame: innerFrame)
+        innerView.wantsLayer = true
+        innerView.layer?.cornerRadius = 14
+        innerView.layer?.masksToBounds = false
+        innerView.layer?.backgroundColor = NSColor(red: 0.04, green: 0.03, blue: 0.02, alpha: 1.0).cgColor
+        innerView.layer?.shadowColor = NSColor.black.cgColor
+        innerView.layer?.shadowOpacity = 0.6
+        innerView.layer?.shadowOffset = CGSize(width: 0, height: -4)
+        innerView.layer?.shadowRadius = 12
+        container.addSubview(innerView)
+
+        // Clip view for rounded corners
+        let clipView = NSView(frame: innerView.bounds)
+        clipView.wantsLayer = true
+        clipView.layer?.cornerRadius = 14
+        clipView.layer?.masksToBounds = true
+        clipView.autoresizingMask = [.width, .height]
+        innerView.addSubview(clipView)
+
+        // SpriteKit view with mouse tracking
+        let view = TrackingSKView(frame: clipView.bounds)
+        view.ignoresSiblingOrder = true
+        view.allowsTransparency = true
+        view.wantsLayer = true
+
+        let scene = OfficeScene()
+        scene.scaleMode = .aspectFit
+        scene.size = CGSize(width: 320, height: 320)
+        view.presentScene(scene)
+
+        clipView.addSubview(view)
+        self.skView = view
+
+        // Position bottom-right
+        if let screen = NSScreen.main {
+            let sf = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: sf.maxX - totalSize.width - 8, y: sf.minY + 8))
+        }
+
+        panel.makeKeyAndOrderFront(nil)
+        panel.setupHoverControls()
+        self.window = panel
+    }
+
+    func setPreset(_ preset: WindowPreset) {
+        currentPreset = preset
+        rebuildWindow()
+    }
+
+    func toggleWindow() {
+        if let window = window, window.isVisible {
+            window.orderOut(nil)
+        } else {
+            showWindow()
+        }
+    }
+}
+
+// MARK: - Menu Bar Controller
+
+class MenuBarController {
+    private var statusItem: NSStatusItem?
+    private let windowController: FloatingWindowController
+
+    init(windowController: FloatingWindowController) {
+        self.windowController = windowController
+    }
+
+    func setup() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "cube.fill", accessibilityDescription: "AgentPong")
+            button.action = #selector(menuBarClicked)
+            button.target = self
+        }
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Show/Hide Office", action: #selector(toggleWindow), keyEquivalent: "o"))
+        menu.addItem(NSMenuItem.separator())
+
+        // Size presets submenu
+        let sizeMenu = NSMenu()
+        for preset in WindowPreset.allCases {
+            let item = NSMenuItem(title: preset.rawValue, action: #selector(setSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset
+            if preset == .large { item.state = .on }
+            sizeMenu.addItem(item)
+        }
+        let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        sizeItem.submenu = sizeMenu
+        menu.addItem(sizeItem)
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        statusItem?.menu = menu
+    }
+
+    @objc private func setSize(_ sender: NSMenuItem) {
+        guard let preset = sender.representedObject as? WindowPreset else { return }
+        windowController.setPreset(preset)
+
+        // Update checkmarks
+        if let sizeMenu = sender.menu {
+            for item in sizeMenu.items {
+                item.state = (item.representedObject as? WindowPreset == preset) ? .on : .off
+            }
+        }
+    }
+
+    @objc private func menuBarClicked() {
+        windowController.toggleWindow()
+    }
+
+    @objc private func toggleWindow() {
+        windowController.toggleWindow()
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+}
+
+// MARK: - App Delegate
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private let windowController = FloatingWindowController()
+    private var menuBarController: MenuBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hide dock icon (we live in the menu bar)
+        NSApp.setActivationPolicy(.accessory)
+
+        // Setup menu bar
+        menuBarController = MenuBarController(windowController: windowController)
+        menuBarController?.setup()
+
+        // Show the floating window
+        windowController.showWindow()
+    }
+}
+
+// MARK: - CLI Mode
+
+func handleCLI() -> Bool {
+    let args = CommandLine.arguments
+    guard args.count >= 2 else { return false }
+
+    let command = args[1]
+
+    switch command {
+    case "report":
+        return handleReport(args: Array(args.dropFirst(2)))
+    case "setup":
+        return handleSetup()
+    case "status":
+        return handleStatus()
+    default:
+        return false
+    }
+}
+
+func handleReport(args: [String]) -> Bool {
+    var sessionId: String?
+    var event: String?
+    var status: String?
+    var cwd: String?
+
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--session":
+            i += 1; if i < args.count { sessionId = args[i] }
+        case "--event":
+            i += 1; if i < args.count { event = args[i] }
+        case "--status":
+            i += 1; if i < args.count { status = args[i] }
+        case "--cwd":
+            i += 1; if i < args.count { cwd = args[i] }
+        default:
+            break
+        }
+        i += 1
+    }
+
+    guard let sid = sessionId, let evt = event else {
+        print("Usage: agentpong report --session ID --event EVENT [--status STATUS] [--cwd CWD]")
+        return true
+    }
+
+    do {
+        let writer = SessionWriter()
+        try writer.report(sessionId: sid, event: evt, status: status, cwd: cwd)
+    } catch {
+        print("Error: \(error.localizedDescription)")
+    }
+    return true
+}
+
+func handleSetup() -> Bool {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let hooksDir = home.appendingPathComponent(".claude/hooks")
+    let fm = FileManager.default
+
+    // Get the path to this executable
+    let execPath = CommandLine.arguments[0]
+
+    print("AgentPong Hook Setup")
+    print("========================")
+    print("Executable: \(execPath)")
+    print("")
+
+    // Create hooks directory if needed
+    try? fm.createDirectory(at: hooksDir, withIntermediateDirectories: true)
+
+    // Print hook configuration instructions
+    print("Add these hooks to your Claude Code configuration:")
+    print("")
+    print("In ~/.claude/hooks.json or via `claude hooks add`:")
+    print("")
+    print("""
+    {
+      "hooks": {
+        "SessionStart": [
+          {
+            "type": "command",
+            "command": "\(execPath) report --session $SESSION_ID --event start --cwd $CWD"
+          }
+        ],
+        "Stop": [
+          {
+            "type": "command",
+            "command": "\(execPath) report --session $SESSION_ID --event stop"
+          }
+        ],
+        "PreToolUse": [
+          {
+            "type": "command",
+            "command": "\(execPath) report --session $SESSION_ID --event active"
+          }
+        ]
+      }
+    }
+    """)
+
+    // Ensure sessions directory exists
+    do {
+        let writer = SessionWriter()
+        try writer.ensureDirectory()
+        print("Sessions directory created: ~/.agentpong/sessions/")
+    } catch {
+        print("Warning: could not create sessions directory: \(error.localizedDescription)")
+    }
+
+    print("")
+    print("Setup complete. Start a Claude Code session to see characters appear.")
+
+    return true
+}
+
+func handleStatus() -> Bool {
+    let reader = SessionReader()
+    let sessions = reader.readAll()
+
+    if sessions.isEmpty {
+        print("No active sessions.")
+        print("Run `agentpong setup` to configure Claude Code hooks.")
+    } else {
+        print("\(sessions.count) active session(s):")
+        for s in sessions {
+            print("  [\(s.status.rawValue)] \(s.displayName) (\(s.id.prefix(8)))")
+        }
+    }
+    return true
+}
+
+// MARK: - Entry Point
+
+// Check if running in CLI mode
+if handleCLI() {
+    exit(0)
+}
+
+// GUI mode
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
