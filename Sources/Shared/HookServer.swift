@@ -37,7 +37,7 @@ public final class HookServer: @unchecked Sendable {
     /// The closure must be invoked with a HookDecision to unblock the hook script.
     public var onPermissionRequest: ((HookEvent, @escaping (HookDecision) -> Void) -> Void)?
 
-    public init(port: UInt16 = 49152) {
+    public init(port: UInt16 = 52775) {
         self.port = port
     }
 

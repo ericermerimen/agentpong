@@ -16,15 +16,27 @@
 
 set -euo pipefail
 
-PORT=49152
+# Read port from server-port file (written by AgentPong on startup).
+# Falls back to default port if file doesn't exist.
+PORT_FILE="$HOME/.agentpong/server-port"
+PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "52775")
 URL="http://localhost:${PORT}/hook"
 
 # Read the full JSON payload from stdin (Claude Code pipes it in)
 INPUT=$(cat)
 
-# Determine if this is a permission event that needs to block
-EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
-PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+# Inject Claude Code's PID so AgentPong can find the terminal window.
+# Falls back gracefully if jq is not installed -- PID injection is
+# nice-to-have (enables click-to-jump) but not required.
+if command -v jq >/dev/null 2>&1; then
+  INPUT=$(echo "$INPUT" | jq --argjson pid "$PPID" '. + {claude_pid: $pid}')
+  EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
+  PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+else
+  # Without jq: extract fields with grep (best-effort)
+  EVENT_NAME=$(echo "$INPUT" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*: *"//;s/"//' || echo "")
+  PERM_MODE=$(echo "$INPUT" | grep -o '"permission_mode"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*: *"//;s/"//' || echo "")
+fi
 
 if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
   TIMEOUT=300

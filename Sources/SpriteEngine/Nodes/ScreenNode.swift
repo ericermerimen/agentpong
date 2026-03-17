@@ -222,20 +222,11 @@ class ScreenNode: SKNode {
         glowNode.fillColor = status.glowColor
         glowNode.alpha = status == .off ? 0 : 1
 
-        // Small monitors (side screens): glow only, no text.
-        // 12-18px wide is not enough for readable text -- just be a color signal.
-        if isSmall {
-            statusLabel.text = ""
-        } else if let first = sessions.first {
-            // Center monitor: show status + project name
-            let label = statusLabel(for: status)
-            statusLabel.text = label
-            let name = first.displayName
-            detailLabel.text = name.count > 20 ? String(name.prefix(17)) + "..." : name
-        } else {
-            statusLabel.text = ""
-            detailLabel.text = ""
-        }
+        // No text on any monitor -- status is conveyed by color glow,
+        // decorative textures (center), and the floor status text.
+        // Text on perspective-distorted trapezoids looks bad at any size.
+        statusLabel.text = ""
+        detailLabel.text = ""
 
         // Pulsing for urgent states
         screenBg.removeAction(forKey: "pulse")

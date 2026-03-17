@@ -297,26 +297,85 @@ class FloatingWindowController {
 
 // MARK: - Menu Bar Controller
 
-class MenuBarController {
+class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let windowController: FloatingWindowController
 
     init(windowController: FloatingWindowController) {
         self.windowController = windowController
+        super.init()
     }
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "cube.fill", accessibilityDescription: "AgentPong")
-            button.action = #selector(menuBarClicked)
-            button.target = self
+            // dog.fill requires macOS 14+ (which we target)
+            button.image = NSImage(systemSymbolName: "dog.fill", accessibilityDescription: "AgentPong")
+                ?? NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "AgentPong")
         }
 
+        // Dynamic menu: rebuilt every time it opens to show current sessions
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show/Hide Office", action: #selector(toggleWindow), keyEquivalent: "o"))
+        menu.delegate = self
+        statusItem?.menu = menu
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // Session summary
+        let sessions = windowController.activeSessions
+        if sessions.isEmpty {
+            let item = NSMenuItem(title: "No active sessions", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else {
+            let running = sessions.filter { $0.status == .running }.count
+            let waiting = sessions.filter { $0.status == .needsInput }.count
+            let idle = sessions.filter { $0.status == .idle }.count
+            let errors = sessions.filter { $0.status == .error }.count
+
+            var parts: [String] = []
+            if running > 0 { parts.append("\(running) working") }
+            if waiting > 0 { parts.append("\(waiting) waiting") }
+            if idle > 0 { parts.append("\(idle) idle") }
+            if errors > 0 { parts.append("\(errors) error") }
+
+            let summary = NSMenuItem(title: parts.joined(separator: ", "), action: nil, keyEquivalent: "")
+            summary.isEnabled = false
+            menu.addItem(summary)
+            menu.addItem(NSMenuItem.separator())
+
+            // Individual sessions (click to jump)
+            for session in sessions.prefix(6) {
+                let statusDot: String
+                switch session.status {
+                case .running:    statusDot = "🟢"
+                case .needsInput: statusDot = "🟡"
+                case .error:      statusDot = "🔴"
+                case .idle:       statusDot = "⚪"
+                default:          statusDot = "⚫"
+                }
+                let item = NSMenuItem(
+                    title: "\(statusDot) \(session.displayName)",
+                    action: #selector(jumpToSession(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = session
+                menu.addItem(item)
+            }
+        }
+
         menu.addItem(NSMenuItem.separator())
+
+        // Show/Hide
+        let toggle = NSMenuItem(title: "Show/Hide Office", action: #selector(toggleWindow), keyEquivalent: "o")
+        toggle.target = self
+        menu.addItem(toggle)
 
         // Size presets submenu
         let sizeMenu = NSMenu()
@@ -324,36 +383,49 @@ class MenuBarController {
             let item = NSMenuItem(title: preset.rawValue, action: #selector(setSize(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = preset
-            if preset == .large { item.state = .on }
+            if preset == windowController.currentPreset { item.state = .on }
             sizeMenu.addItem(item)
         }
         let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
 
+        // Setup (only adds AgentPong hooks, preserves existing settings)
+        let setupItem = NSMenuItem(title: "Install Claude Hooks", action: #selector(runSetup), keyEquivalent: "")
+        setupItem.target = self
+        menu.addItem(setupItem)
+
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
-        statusItem?.menu = menu
+
+        // Version
+        let version = NSMenuItem(title: "AgentPong v\(AppVersion.display)", action: nil, keyEquivalent: "")
+        version.isEnabled = false
+        menu.addItem(version)
+
+        // Quit
+        let quit = NSMenuItem(title: "Quit AgentPong", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    // MARK: - Actions
+
+    @objc private func jumpToSession(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? Session else { return }
+        WindowJumper.shared.jump(to: session)
     }
 
     @objc private func setSize(_ sender: NSMenuItem) {
         guard let preset = sender.representedObject as? WindowPreset else { return }
         windowController.setPreset(preset)
-
-        // Update checkmarks
-        if let sizeMenu = sender.menu {
-            for item in sizeMenu.items {
-                item.state = (item.representedObject as? WindowPreset == preset) ? .on : .off
-            }
-        }
-    }
-
-    @objc private func menuBarClicked() {
-        windowController.toggleWindow()
     }
 
     @objc private func toggleWindow() {
         windowController.toggleWindow()
+    }
+
+    @objc private func runSetup() {
+        _ = handleSetup()
     }
 
     @objc private func quitApp() {
@@ -409,6 +481,9 @@ func handleCLI() -> Bool {
     let command = args[1]
 
     switch command {
+    case "--version", "-v", "version":
+        print("AgentPong \(AppVersion.display)")
+        return true
     case "report":
         return handleReport(args: Array(args.dropFirst(2)))
     case "setup":
@@ -469,6 +544,8 @@ func handleSetup() -> Bool {
     // NOTE: This reads JSON from stdin (Claude Code's hook API) and forwards
     // it directly to the local HTTP server. No string interpolation = no
     // JSON injection risk. Uses jq to extract fields for timeout logic.
+    // Read hook-sender.sh from the repo Scripts/ dir or use the embedded version.
+    // The script handles jq-less fallback and reads port from server-port file.
     let scriptContent = """
     #!/bin/bash
     set -euo pipefail
@@ -476,10 +553,14 @@ func handleSetup() -> Bool {
     PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "52775")
     URL="http://localhost:${PORT}/hook"
     INPUT=$(cat)
-    # Inject Claude Code's PID so AgentPong can find the terminal window
-    INPUT=$(echo "$INPUT" | jq --argjson pid "$PPID" '. + {claude_pid: $pid}')
-    EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
-    PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+    if command -v jq >/dev/null 2>&1; then
+      INPUT=$(echo "$INPUT" | jq --argjson pid "$PPID" '. + {claude_pid: $pid}')
+      EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
+      PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+    else
+      EVENT_NAME=$(echo "$INPUT" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*: *"//;s/"//' || echo "")
+      PERM_MODE=$(echo "$INPUT" | grep -o '"permission_mode"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*: *"//;s/"//' || echo "")
+    fi
     if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
       TIMEOUT=300
     else
