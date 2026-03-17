@@ -1,26 +1,11 @@
 import SpriteKit
 import Shared
 
-/// Monitor screen overlay that shows session status with colored glow.
+/// A single monitor screen overlay showing one session's status.
 ///
-/// The background image has a single dark monitor. This node overlays on top
-/// of it with colored sections for each status category:
-///
-///   ┌─────────────────────────────┐
-///   │  [green 3] [yellow 1] [red] │  <- status indicators inside monitor
-///   │           [idle 2]          │
-///   └─────────────────────────────┘
-///
-/// Priority: red > yellow > green > idle.
-/// The monitor's overall glow color matches the highest-priority active status.
-/// Click to jump to session or approve permissions.
+/// Each monitor in the room gets its own ScreenNode. The node overlays
+/// a perspective-correct trapezoidal shape with status color, glow, and text.
 class ScreenNode: SKNode {
-
-    /// Session groups by status category.
-    struct StatusGroup {
-        let status: ScreenStatus
-        var sessions: [Session]
-    }
 
     enum ScreenStatus: Int, Comparable {
         case off = 0
@@ -54,84 +39,121 @@ class ScreenNode: SKNode {
         }
     }
 
-    private let screenBg: SKSpriteNode
-    private let glowNode: SKSpriteNode
+    private let screenBg: SKShapeNode
+    private let glowNode: SKShapeNode
     private let statusLabel: SKLabelNode
     private let detailLabel: SKLabelNode
     private var permissionBubble: SKNode?
     private var permissionCallback: ((Bool) -> Void)?
 
-    private(set) var highestStatus: ScreenStatus = .off
-    private(set) var statusGroups: [ScreenStatus: [Session]] = [:]
-    private let screenSize: CGSize
+    private(set) var status: ScreenStatus = .off
+    private(set) var session: Session?
 
-    /// Whether a permission bubble is currently showing.
-    var hasPermissionBubble: Bool {
-        permissionBubble != nil
-    }
+    private let localTopLeft: CGPoint
+    private let localTopRight: CGPoint
+    private let localBottomLeft: CGPoint
+    private let localBottomRight: CGPoint
+    private let hitPath: CGPath
+    private let screenHeight: CGFloat
+    private let isSmall: Bool  // left/right monitors are small, fewer text
 
-    init(center: CGPoint, size: CGSize) {
-        self.screenSize = size
+    var hasPermissionBubble: Bool { permissionBubble != nil }
 
-        // Semi-transparent overlay on the monitor area
-        screenBg = SKSpriteNode(color: ScreenStatus.off.color, size: size)
-        screenBg.position = .zero
+    /// Initialize with 4 corner points in scene coordinates.
+    init(topLeft: CGPoint, topRight: CGPoint, bottomLeft: CGPoint, bottomRight: CGPoint) {
+        let centerX = (topLeft.x + topRight.x + bottomLeft.x + bottomRight.x) / 4
+        let centerY = (topLeft.y + topRight.y + bottomLeft.y + bottomRight.y) / 4
 
-        // Glow effect (larger, blurred behind the screen)
-        let glowSize = CGSize(width: size.width * 1.8, height: size.height * 2.0)
-        glowNode = SKSpriteNode(color: .clear, size: glowSize)
-        glowNode.position = CGPoint(x: 0, y: -size.height * 0.3)
+        localTopLeft = CGPoint(x: topLeft.x - centerX, y: topLeft.y - centerY)
+        localTopRight = CGPoint(x: topRight.x - centerX, y: topRight.y - centerY)
+        localBottomLeft = CGPoint(x: bottomLeft.x - centerX, y: bottomLeft.y - centerY)
+        localBottomRight = CGPoint(x: bottomRight.x - centerX, y: bottomRight.y - centerY)
+        screenHeight = topLeft.y - bottomLeft.y
+
+        // Detect if small monitor (side screens are < 20 scene pts wide)
+        let width = topRight.x - topLeft.x
+        isSmall = width < 20
+
+        let path = CGMutablePath()
+        path.move(to: localTopLeft)
+        path.addLine(to: localTopRight)
+        path.addLine(to: localBottomRight)
+        path.addLine(to: localBottomLeft)
+        path.closeSubpath()
+        hitPath = path
+
+        screenBg = SKShapeNode(path: path)
+        screenBg.fillColor = ScreenStatus.off.color
+        screenBg.strokeColor = .clear
+        screenBg.lineWidth = 0
+
+        // Glow behind screen
+        let glowScale: CGFloat = 1.6
+        let glowPath = CGMutablePath()
+        glowPath.move(to: CGPoint(x: localTopLeft.x * glowScale, y: localTopLeft.y * glowScale))
+        glowPath.addLine(to: CGPoint(x: localTopRight.x * glowScale, y: localTopRight.y * glowScale))
+        glowPath.addLine(to: CGPoint(x: localBottomRight.x * glowScale, y: (localBottomRight.y - 8) * glowScale))
+        glowPath.addLine(to: CGPoint(x: localBottomLeft.x * glowScale, y: (localBottomLeft.y - 8) * glowScale))
+        glowPath.closeSubpath()
+
+        glowNode = SKShapeNode(path: glowPath)
+        glowNode.fillColor = .clear
+        glowNode.strokeColor = .clear
         glowNode.alpha = 0
         glowNode.zPosition = -1
 
-        // Status summary text (e.g., "3 running")
         statusLabel = SKLabelNode(fontNamed: "Menlo-Bold")
-        statusLabel.fontSize = 6
+        statusLabel.fontSize = isSmall ? 4 : 6
         statusLabel.fontColor = SKColor(white: 0.9, alpha: 0.9)
         statusLabel.verticalAlignmentMode = .center
-        statusLabel.position = CGPoint(x: 0, y: 2)
+        statusLabel.position = CGPoint(x: 0, y: isSmall ? 0 : 2)
 
-        // Detail text below (e.g., "1 waiting | 1 error")
         detailLabel = SKLabelNode(fontNamed: "Menlo")
-        detailLabel.fontSize = 4.5
+        detailLabel.fontSize = isSmall ? 3 : 4.5
         detailLabel.fontColor = SKColor(white: 0.7, alpha: 0.8)
         detailLabel.verticalAlignmentMode = .center
-        detailLabel.position = CGPoint(x: 0, y: -5)
+        detailLabel.position = CGPoint(x: 0, y: isSmall ? -4 : -5)
 
         super.init()
 
-        self.position = center
+        self.position = CGPoint(x: centerX, y: centerY)
         self.name = "screen-node"
 
         addChild(glowNode)
         addChild(screenBg)
         addChild(statusLabel)
-        addChild(detailLabel)
+        if !isSmall { addChild(detailLabel) }
+    }
+
+    /// Convenience init from ZoneManager.MonitorCorners.
+    convenience init(corners: ZoneManager.MonitorCorners) {
+        self.init(
+            topLeft: corners.topLeft,
+            topRight: corners.topRight,
+            bottomLeft: corners.bottomLeft,
+            bottomRight: corners.bottomRight
+        )
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     // MARK: - Update
 
-    /// Update screen state from current sessions.
-    func updateFromSessions(_ sessions: [Session]) {
-        // Group sessions by screen status
-        var groups: [ScreenStatus: [Session]] = [:]
-        for session in sessions where session.isVisible {
-            let status = screenStatus(for: session)
-            groups[status, default: []].append(session)
-        }
-        statusGroups = groups
+    /// Assign a session to this monitor (or nil to turn it off).
+    func assignSession(_ newSession: Session?) {
+        let oldStatus = status
+        session = newSession
 
-        // Find highest priority active status
-        let oldStatus = highestStatus
-        highestStatus = groups.keys.max() ?? .off
+        if let s = newSession {
+            status = screenStatus(for: s)
+        } else {
+            status = .off
+        }
 
         updateVisuals()
 
-        // Animate transition if status changed
-        if highestStatus != oldStatus {
-            animateStatusChange(from: oldStatus, to: highestStatus)
+        if status != oldStatus {
+            animateStatusChange(to: status)
         }
     }
 
@@ -146,66 +168,55 @@ class ScreenNode: SKNode {
     }
 
     private func updateVisuals() {
-        // Screen background color
-        screenBg.color = highestStatus.color
+        screenBg.fillColor = status.color
 
-        // Glow
-        glowNode.color = highestStatus.glowColor
-        glowNode.alpha = highestStatus == .off ? 0 : 1
+        glowNode.fillColor = status.glowColor
+        glowNode.alpha = status == .off ? 0 : 1
 
-        // Build status text
-        let running = statusGroups[.running]?.count ?? 0
-        let waiting = statusGroups[.needsInput]?.count ?? 0
-        let errors = statusGroups[.error]?.count ?? 0
-        let idle = statusGroups[.idle]?.count ?? 0
-        let total = running + waiting + errors + idle
-
-        if total == 0 {
+        if let s = session {
+            if isSmall {
+                // Small monitor: just show abbreviated status
+                statusLabel.text = String(s.displayName.prefix(6))
+            } else {
+                statusLabel.text = s.displayName
+                detailLabel.text = s.status.rawValue
+            }
+        } else {
             statusLabel.text = ""
             detailLabel.text = ""
-        } else {
-            // Main label: highest priority status
-            switch highestStatus {
-            case .error:      statusLabel.text = "\(errors) error\(errors > 1 ? "s" : "")"
-            case .needsInput: statusLabel.text = "\(waiting) waiting"
-            case .running:    statusLabel.text = "\(running) running"
-            case .idle:       statusLabel.text = "\(idle) idle"
-            case .off:        statusLabel.text = ""
-            }
-
-            // Detail line: other statuses
-            var parts: [String] = []
-            if running > 0 && highestStatus != .running { parts.append("\(running) run") }
-            if waiting > 0 && highestStatus != .needsInput { parts.append("\(waiting) wait") }
-            if errors > 0 && highestStatus != .error { parts.append("\(errors) err") }
-            if idle > 0 && highestStatus != .idle { parts.append("\(idle) idle") }
-            detailLabel.text = parts.joined(separator: " | ")
         }
 
         // Pulsing for urgent states
-        removeAction(forKey: "pulse")
-        if highestStatus == .error {
+        screenBg.removeAction(forKey: "pulse")
+        if status == .error {
             let pulse = SKAction.sequence([
                 SKAction.fadeAlpha(to: 0.7, duration: 0.4),
                 SKAction.fadeAlpha(to: 1.0, duration: 0.4),
             ])
             screenBg.run(SKAction.repeatForever(pulse), withKey: "pulse")
-        } else if highestStatus == .needsInput {
+        } else if status == .needsInput {
             let pulse = SKAction.sequence([
                 SKAction.fadeAlpha(to: 0.85, duration: 0.6),
                 SKAction.fadeAlpha(to: 1.0, duration: 0.6),
             ])
             screenBg.run(SKAction.repeatForever(pulse), withKey: "pulse")
         } else {
-            screenBg.removeAction(forKey: "pulse")
             screenBg.alpha = 1.0
         }
     }
 
-    private func animateStatusChange(from oldStatus: ScreenStatus, to newStatus: ScreenStatus) {
-        // Brief flash on status change
-        let flash = SKSpriteNode(color: newStatus.color.withAlphaComponent(0.9), size: screenSize)
-        flash.position = .zero
+    private func animateStatusChange(to newStatus: ScreenStatus) {
+        guard newStatus != .off else { return }
+        let flashPath = CGMutablePath()
+        flashPath.move(to: localTopLeft)
+        flashPath.addLine(to: localTopRight)
+        flashPath.addLine(to: localBottomRight)
+        flashPath.addLine(to: localBottomLeft)
+        flashPath.closeSubpath()
+
+        let flash = SKShapeNode(path: flashPath)
+        flash.fillColor = newStatus.color.withAlphaComponent(0.9)
+        flash.strokeColor = .clear
         flash.zPosition = 10
         addChild(flash)
 
@@ -215,37 +226,31 @@ class ScreenNode: SKNode {
         ]))
     }
 
-    // MARK: - Click Handling
+    // MARK: - Hit Testing
 
-    /// Check if a scene point hits this screen. Returns true if consumed.
     func hitTest(scenePoint: CGPoint) -> Bool {
-        let local = convert(scenePoint, from: scene!)
-        let hitRect = CGRect(
-            x: -screenSize.width / 2 - 4,
-            y: -screenSize.height / 2 - 4,
-            width: screenSize.width + 8,
-            height: screenSize.height + 8
-        )
-        return hitRect.contains(local)
-    }
-
-    /// Handle a click on this screen. Returns the sessions in the highest-priority category.
-    func sessionsForClick() -> [Session] {
-        return statusGroups[highestStatus] ?? []
+        guard let parentScene = scene else { return false }
+        let local = convert(scenePoint, from: parentScene)
+        let margin: CGFloat = 4
+        let expandedPath = CGMutablePath()
+        expandedPath.move(to: CGPoint(x: localTopLeft.x - margin, y: localTopLeft.y + margin))
+        expandedPath.addLine(to: CGPoint(x: localTopRight.x + margin, y: localTopRight.y + margin))
+        expandedPath.addLine(to: CGPoint(x: localBottomRight.x + margin, y: localBottomRight.y - margin))
+        expandedPath.addLine(to: CGPoint(x: localBottomLeft.x - margin, y: localBottomLeft.y - margin))
+        expandedPath.closeSubpath()
+        return expandedPath.contains(local)
     }
 
     // MARK: - Permission Bubbles
 
-    /// Show an interactive permission bubble above the screen.
     func showPermissionBubble(text: String, onDecision: @escaping (Bool) -> Void) {
         removePermissionBubble()
 
         let bubble = SKNode()
         bubble.name = "permission-bubble"
-        bubble.position = CGPoint(x: 0, y: screenSize.height / 2 + 20)
+        bubble.position = CGPoint(x: 0, y: screenHeight / 2 + 20)
         bubble.zPosition = 100
 
-        // Background
         let bgW: CGFloat = 90
         let bgH: CGFloat = 28
         let bg = SKShapeNode(rectOf: CGSize(width: bgW, height: bgH), cornerRadius: 4)
@@ -254,7 +259,6 @@ class ScreenNode: SKNode {
         bg.lineWidth = 1
         bubble.addChild(bg)
 
-        // Tool description
         let label = SKLabelNode(fontNamed: "Menlo")
         label.text = String(text.prefix(35))
         label.fontSize = 4.5
@@ -263,7 +267,6 @@ class ScreenNode: SKNode {
         label.position = CGPoint(x: 0, y: 5)
         bubble.addChild(label)
 
-        // Allow button
         let allowBtn = SKShapeNode(rectOf: CGSize(width: 32, height: 10), cornerRadius: 2)
         allowBtn.fillColor = SKColor(red: 0.15, green: 0.5, blue: 0.2, alpha: 1.0)
         allowBtn.strokeColor = .clear
@@ -279,7 +282,6 @@ class ScreenNode: SKNode {
         allowLabel.position = CGPoint(x: -20, y: -7)
         bubble.addChild(allowLabel)
 
-        // Deny button
         let denyBtn = SKShapeNode(rectOf: CGSize(width: 32, height: 10), cornerRadius: 2)
         denyBtn.fillColor = SKColor(red: 0.5, green: 0.15, blue: 0.15, alpha: 1.0)
         denyBtn.strokeColor = .clear
@@ -295,7 +297,6 @@ class ScreenNode: SKNode {
         denyLabel.position = CGPoint(x: 20, y: -7)
         bubble.addChild(denyLabel)
 
-        // Pulse attention
         let pulse = SKAction.sequence([
             SKAction.scale(to: 1.05, duration: 0.5),
             SKAction.scale(to: 1.0, duration: 0.5),
@@ -313,14 +314,12 @@ class ScreenNode: SKNode {
         permissionCallback = nil
     }
 
-    /// Handle click on permission bubble buttons. Returns true if consumed.
     func handlePermissionClick(scenePoint: CGPoint) -> Bool {
         guard let bubble = permissionBubble, let parentScene = scene else { return false }
 
         let localPoint = convert(scenePoint, from: parentScene)
         let bubbleY = bubble.position.y
 
-        // Allow button hit area
         let allowArea = CGRect(x: -36, y: bubbleY - 14, width: 32, height: 12)
         if allowArea.contains(localPoint) {
             permissionCallback?(true)
@@ -328,7 +327,6 @@ class ScreenNode: SKNode {
             return true
         }
 
-        // Deny button hit area
         let denyArea = CGRect(x: 4, y: bubbleY - 14, width: 32, height: 12)
         if denyArea.contains(localPoint) {
             permissionCallback?(false)
@@ -337,19 +335,5 @@ class ScreenNode: SKNode {
         }
 
         return false
-    }
-
-    // MARK: - Tooltip
-
-    /// Build tooltip text for hover display.
-    func tooltipText() -> String? {
-        let allSessions = statusGroups.values.flatMap { $0 }
-        guard !allSessions.isEmpty else { return nil }
-
-        if allSessions.count == 1, let s = allSessions.first {
-            return "\(s.displayName) (\(s.status.rawValue))"
-        }
-
-        return allSessions.prefix(4).map { "\($0.displayName): \($0.status.rawValue)" }.joined(separator: "\n")
     }
 }

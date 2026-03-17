@@ -322,7 +322,7 @@ class MenuBarController {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowController = FloatingWindowController()
     private var menuBarController: MenuBarController?
-    private let hookServer = HookServer()
+    private let hookServer = HookServer(port: 52775)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon (we live in the menu bar)
@@ -339,12 +339,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try hookServer.start()
             NSLog("[AgentPong] Hook server started on port \(hookServer.actualPort)")
+            // Write port file so hook-sender.sh can find us
+            writePortFile(port: hookServer.actualPort)
         } catch {
             NSLog("[AgentPong] Failed to start hook server: \(error)")
         }
 
         // Pass hookServer to the OfficeScene
         windowController.passHookServer(hookServer)
+    }
+
+    private func writePortFile(port: UInt16) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let portFile = home.appendingPathComponent(".agentpong/server-port")
+        try? String(port).write(to: portFile, atomically: true, encoding: .utf8)
     }
 }
 
@@ -420,9 +428,12 @@ func handleSetup() -> Bool {
     let scriptContent = """
     #!/bin/bash
     set -euo pipefail
-    PORT=49152
+    PORT_FILE="$HOME/.agentpong/server-port"
+    PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "52775")
     URL="http://localhost:${PORT}/hook"
     INPUT=$(cat)
+    # Inject Claude Code's PID so AgentPong can find the terminal window
+    INPUT=$(echo "$INPUT" | jq --argjson pid "$PPID" '. + {claude_pid: $pid}')
     EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
     PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
     if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
@@ -469,14 +480,21 @@ func handleSetup() -> Bool {
     ]
 
     var hooks = settings["hooks"] as? [String: Any] ?? [:]
-    let agentPongEntry: [String: Any] = ["type": "command", "command": hookPath]
+    // Claude Code hooks format: each event has an array of hook groups.
+    // Each group has an optional "matcher" and a "hooks" array of command entries.
+    let agentPongGroup: [String: Any] = [
+        "hooks": [["type": "command", "command": hookPath]]
+    ]
     for event in hookEvents {
-        var eventHooks = hooks[event] as? [[String: Any]] ?? []
-        // Don't duplicate: remove any existing AgentPong hook for this event
-        eventHooks.removeAll { ($0["command"] as? String)?.contains("agentpong") == true }
-        // Append our hook (preserves other tools' hooks)
-        eventHooks.append(agentPongEntry)
-        hooks[event] = eventHooks
+        var eventGroups = hooks[event] as? [[String: Any]] ?? []
+        // Don't duplicate: remove any existing AgentPong hook group
+        eventGroups.removeAll { group in
+            guard let groupHooks = group["hooks"] as? [[String: Any]] else { return false }
+            return groupHooks.contains { ($0["command"] as? String)?.contains("agentpong") == true }
+        }
+        // Append our hook group (preserves other tools' hooks)
+        eventGroups.append(agentPongGroup)
+        hooks[event] = eventGroups
     }
     settings["hooks"] = hooks
 

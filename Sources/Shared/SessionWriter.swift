@@ -37,6 +37,7 @@ public final class SessionWriter {
         event: String,
         status: String? = nil,
         cwd: String? = nil,
+        pid: Int? = nil,
         taskDescription: String? = nil
     ) throws {
         try ensureDirectory()
@@ -87,6 +88,9 @@ public final class SessionWriter {
             if session.name == nil {
                 session.name = (cwd as NSString).lastPathComponent
             }
+        }
+        if let pid = pid {
+            session.pid = pid
         }
         if let desc = taskDescription {
             session.taskDescription = desc

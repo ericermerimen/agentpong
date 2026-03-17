@@ -33,6 +33,7 @@ public struct HookEvent: Codable, Sendable {
     public var reason: String?         // Stop: end_turn, interrupt, etc.
     public var notificationType: String? // Notification: permission_prompt, idle_prompt, etc.
     public var userPrompt: String?     // UserPromptSubmit
+    public var claudePid: Int?         // Injected by hook-sender.sh ($PPID of the Claude process)
 
     enum CodingKeys: String, CodingKey {
         case hookEventName = "hook_event_name"
@@ -46,6 +47,7 @@ public struct HookEvent: Codable, Sendable {
         case reason
         case notificationType = "notification_type"
         case userPrompt = "user_prompt"
+        case claudePid = "claude_pid"
     }
 
     /// Convenience: is this a PreToolUse event where we should show

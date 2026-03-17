@@ -7,10 +7,13 @@ import Shared
 /// Scale factor: 1024 / 320 = 3.2
 ///
 /// Room layout (top-down, image coordinates):
-///   - Monitor + desk against top wall (~y:100-280)
+///   - Triple monitor desk against top wall
+///     - Left monitor:   x=467-505, y=165-213 (small, angled left)
+///     - Center monitor:  x=614-771, y=134-213 (large, straight-on)
+///     - Right monitor:   x=790-848, y=140-215 (medium, angled right)
 ///   - Lamp in center (~x:400, y:360)
 ///   - Open floor (~y:400-830)
-///   - Dog bed bottom-left (~x:240, y:870)
+///   - Dog bed bottom-left (~x:200, y:940)
 ///   - Water bowl bottom-center (~x:410, y:920)
 ///   - Plant bottom-right (~x:830, y:870)
 public class ZoneManager {
@@ -26,16 +29,61 @@ public class ZoneManager {
         CGPoint(x: x / scale, y: sceneHeight - (y / scale))
     }
 
-    // MARK: - Monitor Screen
+    // MARK: - Monitor Screens (Triple Setup)
 
-    /// Center of the monitor screen (dark area in background).
-    public var monitorCenter: CGPoint {
-        imageToScene(x: 640, y: 162)
+    /// Monitor corner data for creating ScreenNodes.
+    public struct MonitorCorners {
+        public let topLeft: CGPoint
+        public let topRight: CGPoint
+        public let bottomLeft: CGPoint
+        public let bottomRight: CGPoint
     }
 
-    /// Size of the monitor screen overlay in scene points.
-    public var monitorSize: CGSize {
-        CGSize(width: 200 / scale, height: 95 / scale)  // ~62x30
+    /// Left monitor -- small, slightly angled. Measured via edge detection.
+    /// Image coords: x=467-505, y=165-213 (after top reflection bar).
+    public var leftMonitor: MonitorCorners {
+        MonitorCorners(
+            topLeft: imageToScene(x: 468, y: 166),
+            topRight: imageToScene(x: 505, y: 160),
+            bottomLeft: imageToScene(x: 468, y: 212),
+            bottomRight: imageToScene(x: 505, y: 212)
+        )
+    }
+
+    /// Center monitor -- large, straight-on view. Measured via edge detection.
+    /// Image coords: x=614-771, y=134-213.
+    public var centerMonitor: MonitorCorners {
+        MonitorCorners(
+            topLeft: imageToScene(x: 614, y: 134),
+            topRight: imageToScene(x: 771, y: 134),
+            bottomLeft: imageToScene(x: 614, y: 212),
+            bottomRight: imageToScene(x: 771, y: 212)
+        )
+    }
+
+    /// Right monitor -- medium, angled right. Measured via edge detection.
+    /// Image coords: x=790-848, y=140-215 (perspective angles top edge).
+    public var rightMonitor: MonitorCorners {
+        MonitorCorners(
+            topLeft: imageToScene(x: 790, y: 140),
+            topRight: imageToScene(x: 847, y: 150),
+            bottomLeft: imageToScene(x: 790, y: 214),
+            bottomRight: imageToScene(x: 847, y: 214)
+        )
+    }
+
+    /// All monitors in order (left, center, right).
+    public var allMonitors: [MonitorCorners] {
+        [leftMonitor, centerMonitor, rightMonitor]
+    }
+
+    /// Center of all monitors combined (for husky reactions).
+    public var monitorCenter: CGPoint {
+        let c = centerMonitor
+        return CGPoint(
+            x: (c.topLeft.x + c.topRight.x + c.bottomLeft.x + c.bottomRight.x) / 4,
+            y: (c.topLeft.y + c.topRight.y + c.bottomLeft.y + c.bottomRight.y) / 4
+        )
     }
 
     // MARK: - Pet Zones
@@ -96,15 +144,11 @@ public class ZoneManager {
     }
 
     /// Perspective scale factor based on Y position.
-    /// Objects at bottom of scene (closer to camera) appear larger.
-    /// Objects at top (further away) appear smaller.
-    ///
-    /// Range: ~0.8 at top of walkable area to ~1.3 at bottom.
     public func perspectiveScale(for sceneY: CGFloat) -> CGFloat {
         let area = walkableArea
-        let t = (sceneY - area.minY) / max(area.height, 1)  // 0=bottom, 1=top
-        let minScale: CGFloat = 1.15  // at bottom (close to camera)
-        let maxScale: CGFloat = 0.85  // at top (far from camera)
+        let t = (sceneY - area.minY) / max(area.height, 1)
+        let minScale: CGFloat = 1.15
+        let maxScale: CGFloat = 0.85
         return minScale + (maxScale - minScale) * t
     }
 
