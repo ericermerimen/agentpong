@@ -16,6 +16,13 @@ public class OfficeScene: SKScene {
     private var lastUpdateTime: TimeInterval = 0
     private let pollInterval: TimeInterval = 5.0
 
+    // Hook server for real-time events
+    private struct PendingPermission {
+        let event: HookEvent
+        let respond: (HookDecision) -> Void
+    }
+    private var pendingPermissions: [String: PendingPermission] = [:]
+
     // Layers
     private let floorLayer = SKNode()       // z: -100
     private let furnitureLayer = SKNode()    // z: 0-40 (depth sorted)
@@ -29,6 +36,10 @@ public class OfficeScene: SKScene {
 
     public var onSessionsUpdated: (([Session]) -> Void)?
     public var currentSessions: [Session] { sessions }
+
+    public var hookServer: HookServer? {
+        didSet { subscribeToHookEvents() }
+    }
 
     // MARK: - Lifecycle
 
@@ -235,6 +246,10 @@ public class OfficeScene: SKScene {
         let target = zoneManager.targetPosition(zone: session.zone, sessionId: session.id)
         character.walkTo(target: target, speed: 60) { [weak self] in
             self?.applyZoneState(character: character, session: session)
+            // Check for queued permission request that arrived before character walk-in
+            if let pending = self?.pendingPermissions[session.id] {
+                self?.showPermissionBubbleOnCharacter(character, event: pending.event, respond: pending.respond)
+            }
         }
     }
 
@@ -275,6 +290,8 @@ public class OfficeScene: SKScene {
 
     private func updateCharacterBubble(session: Session) {
         guard let character = characters[session.id] else { return }
+        // Don't clobber an active permission bubble with a status bubble
+        if character.hasPermissionBubble { return }
         switch session.status {
         case .needsInput: character.showBubble(text: "?", color: SKColor(red: 0.9, green: 0.7, blue: 0.1, alpha: 1.0))
         case .error: character.showBubble(text: "!", color: SKColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1.0))
@@ -304,6 +321,13 @@ public class OfficeScene: SKScene {
     public override func mouseDown(with event: NSEvent) {
         let location = event.location(in: self)
 
+        // Check permission bubbles first (highest priority)
+        for (_, character) in characters {
+            if character.handleClick(at: location) {
+                return
+            }
+        }
+
         // Click on cat to scare it
         if let cat = mascot, cat.hitTest(location) {
             cat.scare()
@@ -312,5 +336,84 @@ public class OfficeScene: SKScene {
 
     public override func mouseMoved(with event: NSEvent) {
         // Hover tooltips handled by AppKit popover in future
+    }
+
+    // MARK: - Hook Server Integration
+
+    private func subscribeToHookEvents() {
+        hookServer?.onEvent = { [weak self] event in
+            self?.handleHookEvent(event)
+        }
+
+        hookServer?.onPermissionRequest = { [weak self] event, respond in
+            self?.handlePermissionRequest(event, respond: respond)
+        }
+    }
+
+    private func handleHookEvent(_ event: HookEvent) {
+        // Map Claude Code hook event names to SessionWriter event names
+        // SessionWriter expects: "start", "stop", "active", "idle", "error", "needsInput", "notify"
+        let writerEvent: String
+        switch event.hookEventName {
+        case "SessionStart": writerEvent = "start"
+        case "SessionEnd", "Stop": writerEvent = "stop"
+        case "PreToolUse", "PostToolUse": writerEvent = "active"
+        case "Notification": writerEvent = "notify"
+        default: writerEvent = "active"
+        }
+
+        // Do file I/O on background queue, then refresh on main
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let writer = SessionWriter()
+            try? writer.report(
+                sessionId: event.sessionId,
+                event: writerEvent,
+                cwd: event.cwd
+            )
+            DispatchQueue.main.async {
+                self?.refreshSessions()
+            }
+        }
+    }
+
+    private func handlePermissionRequest(_ event: HookEvent, respond: @escaping (HookDecision) -> Void) {
+        let sessionId = event.sessionId
+
+        // Store the pending permission
+        pendingPermissions[sessionId] = PendingPermission(
+            event: event,
+            respond: respond
+        )
+
+        // Force refresh to show the character
+        refreshSessions()
+
+        // Show interactive permission bubble on the character
+        if let character = characters[sessionId] {
+            showPermissionBubbleOnCharacter(character, event: event, respond: respond)
+        }
+        // If character hasn't arrived yet (first event is PreToolUse),
+        // the pending permission is stored and checked in arriveCharacter's completion.
+    }
+
+    private func showPermissionBubbleOnCharacter(_ character: CharacterNode, event: HookEvent, respond: @escaping (HookDecision) -> Void) {
+        let toolDesc = "\(event.toolName ?? "tool"): \(truncate(event.toolInputDescription, to: 30))"
+        character.showPermissionBubble(text: toolDesc) { [weak self] allowed in
+            respond(HookDecision(allow: allowed))
+            self?.pendingPermissions.removeValue(forKey: event.sessionId)
+            character.removeBubble()
+        }
+
+        // Server-side timeout: auto-allow after 5 minutes to prevent connection leak
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+            guard self?.pendingPermissions[event.sessionId] != nil else { return }
+            respond(HookDecision(allow: true, reason: "auto-allowed: user did not respond in 5 minutes"))
+            self?.pendingPermissions.removeValue(forKey: event.sessionId)
+            character.removeBubble()
+        }
+    }
+
+    private func truncate(_ s: String, to length: Int) -> String {
+        s.count > length ? String(s.prefix(length)) + "..." : s
     }
 }

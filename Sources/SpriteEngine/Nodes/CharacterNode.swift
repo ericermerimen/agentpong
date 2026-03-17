@@ -19,11 +19,17 @@ class CharacterNode: SKNode {
     private let sprite: SKSpriteNode
     private let nameLabel: SKLabelNode
     private var bubbleNode: SKNode?
+    private var permissionCallback: ((Bool) -> Void)?
     private let characterColor: SKColor
     private let hasRealSprites: Bool
     private let tintColor: SKColor
     private let spriteScale: CGFloat
     private let spriteCanvasSize: CGFloat
+
+    /// Whether a permission bubble is currently showing (prevents clobbering by status updates).
+    var hasPermissionBubble: Bool {
+        bubbleNode?.name == "permission-bubble"
+    }
 
     // MARK: - Init
 
@@ -264,6 +270,110 @@ class CharacterNode: SKNode {
     func removeBubble() {
         bubbleNode?.removeFromParent()
         bubbleNode = nil
+        permissionCallback = nil
+    }
+
+    // MARK: - Permission Bubbles
+
+    /// Show an interactive permission bubble with Allow/Deny buttons.
+    /// The onDecision closure is called with true (allow) or false (deny).
+    func showPermissionBubble(text: String, onDecision: @escaping (Bool) -> Void) {
+        removeBubble()
+
+        let renderedHeight = spriteCanvasSize * spriteScale
+        let bubble = SKNode()
+        bubble.name = "permission-bubble"
+        bubble.position = CGPoint(x: 0, y: renderedHeight + 16)
+        bubble.zPosition = 100
+
+        // Background
+        let bgW: CGFloat = 80
+        let bgH: CGFloat = 28
+        let bg = SKShapeNode(rectOf: CGSize(width: bgW, height: bgH), cornerRadius: 4)
+        bg.fillColor = SKColor(white: 0.06, alpha: 0.95)
+        bg.strokeColor = SKColor(red: 0.9, green: 0.7, blue: 0.1, alpha: 0.7)
+        bg.lineWidth = 1
+        bubble.addChild(bg)
+
+        // Tool description label
+        let label = SKLabelNode(fontNamed: "Menlo")
+        label.text = text
+        label.fontSize = 5
+        label.fontColor = SKColor(white: 0.9, alpha: 0.9)
+        label.verticalAlignmentMode = .center
+        label.position = CGPoint(x: 0, y: 5)
+        bubble.addChild(label)
+
+        // Allow button (green)
+        let allowBtn = SKShapeNode(rectOf: CGSize(width: 30, height: 10), cornerRadius: 2)
+        allowBtn.fillColor = SKColor(red: 0.15, green: 0.5, blue: 0.2, alpha: 1.0)
+        allowBtn.strokeColor = .clear
+        allowBtn.position = CGPoint(x: -18, y: -7)
+        allowBtn.name = "allow-btn"
+        bubble.addChild(allowBtn)
+
+        let allowLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+        allowLabel.text = "Allow"
+        allowLabel.fontSize = 5
+        allowLabel.fontColor = .white
+        allowLabel.verticalAlignmentMode = .center
+        allowLabel.position = CGPoint(x: -18, y: -7)
+        bubble.addChild(allowLabel)
+
+        // Deny button (red)
+        let denyBtn = SKShapeNode(rectOf: CGSize(width: 30, height: 10), cornerRadius: 2)
+        denyBtn.fillColor = SKColor(red: 0.5, green: 0.15, blue: 0.15, alpha: 1.0)
+        denyBtn.strokeColor = .clear
+        denyBtn.position = CGPoint(x: 18, y: -7)
+        denyBtn.name = "deny-btn"
+        bubble.addChild(denyBtn)
+
+        let denyLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+        denyLabel.text = "Deny"
+        denyLabel.fontSize = 5
+        denyLabel.fontColor = .white
+        denyLabel.verticalAlignmentMode = .center
+        denyLabel.position = CGPoint(x: 18, y: -7)
+        bubble.addChild(denyLabel)
+
+        // Pulse to draw attention
+        let pulse = SKAction.sequence([
+            SKAction.scale(to: 1.05, duration: 0.5),
+            SKAction.scale(to: 1.0, duration: 0.5),
+        ])
+        bubble.run(SKAction.repeatForever(pulse))
+
+        addChild(bubble)
+        bubbleNode = bubble
+        permissionCallback = onDecision
+    }
+
+    /// Handle click on permission bubble buttons. Returns true if click was consumed.
+    func handleClick(at scenePoint: CGPoint) -> Bool {
+        guard let bubble = bubbleNode, bubble.name == "permission-bubble",
+              let parentScene = scene else { return false }
+
+        let localPoint = convert(scenePoint, from: parentScene)
+
+        // Check allow button hit area
+        let allowArea = CGRect(x: -33, y: bubble.position.y - 14, width: 30, height: 12)
+        if allowArea.contains(localPoint) {
+            permissionCallback?(true)
+            permissionCallback = nil
+            removeBubble()
+            return true
+        }
+
+        // Check deny button hit area
+        let denyArea = CGRect(x: 3, y: bubble.position.y - 14, width: 30, height: 12)
+        if denyArea.contains(localPoint) {
+            permissionCallback?(false)
+            permissionCallback = nil
+            removeBubble()
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Private

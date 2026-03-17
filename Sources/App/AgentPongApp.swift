@@ -243,6 +243,12 @@ class FloatingWindowController {
             showWindow()
         }
     }
+
+    func passHookServer(_ server: HookServer) {
+        if let scene = skView?.scene as? OfficeScene {
+            scene.hookServer = server
+        }
+    }
 }
 
 // MARK: - Menu Bar Controller
@@ -316,6 +322,7 @@ class MenuBarController {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowController = FloatingWindowController()
     private var menuBarController: MenuBarController?
+    private let hookServer = HookServer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon (we live in the menu bar)
@@ -327,6 +334,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Show the floating window
         windowController.showWindow()
+
+        // Start hook server for real-time Claude Code events
+        do {
+            try hookServer.start()
+            NSLog("[AgentPong] Hook server started on port \(hookServer.actualPort)")
+        } catch {
+            NSLog("[AgentPong] Failed to start hook server: \(error)")
+        }
+
+        // Pass hookServer to the OfficeScene
+        windowController.passHookServer(hookServer)
     }
 }
 
@@ -389,62 +407,96 @@ func handleReport(args: [String]) -> Bool {
 
 func handleSetup() -> Bool {
     let home = FileManager.default.homeDirectoryForCurrentUser
-    let hooksDir = home.appendingPathComponent(".claude/hooks")
-    let fm = FileManager.default
+    let hooksDir = home.appendingPathComponent(".agentpong/hooks")
+    let hookScript = hooksDir.appendingPathComponent("hook-sender.sh")
 
-    // Get the path to this executable
-    let execPath = CommandLine.arguments[0]
+    // Create hooks directory
+    try? FileManager.default.createDirectory(at: hooksDir, withIntermediateDirectories: true)
 
-    print("AgentPong Hook Setup")
-    print("========================")
-    print("Executable: \(execPath)")
-    print("")
+    // Write hook-sender.sh
+    // NOTE: This reads JSON from stdin (Claude Code's hook API) and forwards
+    // it directly to the local HTTP server. No string interpolation = no
+    // JSON injection risk. Uses jq to extract fields for timeout logic.
+    let scriptContent = """
+    #!/bin/bash
+    set -euo pipefail
+    PORT=49152
+    URL="http://localhost:${PORT}/hook"
+    INPUT=$(cat)
+    EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // ""')
+    PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // ""')
+    if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
+      TIMEOUT=300
+    else
+      TIMEOUT=5
+    fi
+    RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" -X POST -H "Content-Type: application/json" -D /dev/stderr -d @- "$URL" 2>/tmp/agentpong-hook-headers.$$ || true)
+    if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ] && [ -n "$RESPONSE" ]; then
+      echo "$RESPONSE"
+      EXIT_CODE=$(grep -i "X-Hook-Exit-Code" /tmp/agentpong-hook-headers.$$ 2>/dev/null | tr -dc '0-9' || echo "0")
+      rm -f /tmp/agentpong-hook-headers.$$
+      exit "${EXIT_CODE:-0}"
+    fi
+    rm -f /tmp/agentpong-hook-headers.$$ 2>/dev/null
+    exit 0
+    """
 
-    // Create hooks directory if needed
-    try? fm.createDirectory(at: hooksDir, withIntermediateDirectories: true)
-
-    // Print hook configuration instructions
-    print("Add these hooks to your Claude Code configuration:")
-    print("")
-    print("In ~/.claude/hooks.json or via `claude hooks add`:")
-    print("")
-    print("""
-    {
-      "hooks": {
-        "SessionStart": [
-          {
-            "type": "command",
-            "command": "\(execPath) report --session $SESSION_ID --event start --cwd $CWD"
-          }
-        ],
-        "Stop": [
-          {
-            "type": "command",
-            "command": "\(execPath) report --session $SESSION_ID --event stop"
-          }
-        ],
-        "PreToolUse": [
-          {
-            "type": "command",
-            "command": "\(execPath) report --session $SESSION_ID --event active"
-          }
-        ]
-      }
+    do {
+        try scriptContent.write(to: hookScript, atomically: true, encoding: .utf8)
+        // Make executable
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hookScript.path
+        )
+    } catch {
+        print("Error writing hook script: \(error)")
+        return true
     }
-    """)
+
+    // Update Claude settings -- append hooks, don't overwrite existing ones
+    let claudeSettings = home.appendingPathComponent(".claude/settings.json")
+    var settings: [String: Any] = [:]
+    if let data = try? Data(contentsOf: claudeSettings),
+       let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        settings = existing
+    }
+
+    let hookPath = hookScript.path
+    let hookEvents = [
+        "SessionStart", "SessionEnd", "Stop",
+        "PreToolUse", "PostToolUse",
+        "Notification"
+    ]
+
+    var hooks = settings["hooks"] as? [String: Any] ?? [:]
+    let agentPongEntry: [String: Any] = ["type": "command", "command": hookPath]
+    for event in hookEvents {
+        var eventHooks = hooks[event] as? [[String: Any]] ?? []
+        // Don't duplicate: remove any existing AgentPong hook for this event
+        eventHooks.removeAll { ($0["command"] as? String)?.contains("agentpong") == true }
+        // Append our hook (preserves other tools' hooks)
+        eventHooks.append(agentPongEntry)
+        hooks[event] = eventHooks
+    }
+    settings["hooks"] = hooks
+
+    if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
+        try? data.write(to: claudeSettings, options: .atomic)
+    }
 
     // Ensure sessions directory exists
     do {
         let writer = SessionWriter()
         try writer.ensureDirectory()
-        print("Sessions directory created: ~/.agentpong/sessions/")
     } catch {
         print("Warning: could not create sessions directory: \(error.localizedDescription)")
     }
 
-    print("")
-    print("Setup complete. Start a Claude Code session to see characters appear.")
-
+    print("AgentPong hooks installed!")
+    print("  Hook script: \(hookPath)")
+    print("  Claude settings updated: \(claudeSettings.path)")
+    print("  Events: \(hookEvents.joined(separator: ", "))")
+    print("\nRestart Claude Code for hooks to take effect.")
     return true
 }
 
