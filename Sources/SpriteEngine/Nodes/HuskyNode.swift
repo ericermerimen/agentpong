@@ -248,9 +248,10 @@ class HuskyNode: SKNode {
         guard behavior != .scared else { return }
         behavior = .reactingToScreen
 
+        // Walk to the top of the walkable floor (in front of desk), not behind the monitors.
         let nearMonitor = CGPoint(
             x: monitorPosition.x + CGFloat.random(in: -15...15),
-            y: monitorPosition.y - 25
+            y: wanderZone.maxY - 5
         )
         walkTo(target: nearMonitor, speed: 50) { [weak self] in
             self?.playBarkAnimation {
@@ -264,9 +265,10 @@ class HuskyNode: SKNode {
               || behavior == .lookingAround || behavior == .watchingCursor else { return }
         behavior = .reactingToScreen
 
+        // Walk to top of walkable floor (in front of desk), not behind the monitors.
         let nearMonitor = CGPoint(
             x: monitorPosition.x + CGFloat.random(in: -10...10),
-            y: monitorPosition.y - 25
+            y: wanderZone.maxY - 5
         )
         walkTo(target: nearMonitor, speed: 35) { [weak self] in
             self?.playHeadTiltAnimation {

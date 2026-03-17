@@ -211,8 +211,13 @@ class ScreenNode: SKNode {
     }
 
     private func updateVisuals() {
-        // screenBg is inside cropNode, texture sprite covers it at higher z
-        screenBg.fillColor = status.color
+        // When a texture is displayed, keep the dark background so the status
+        // color doesn't bleed through the margin around the scaled-down sprite.
+        if contentSprite != nil {
+            screenBg.fillColor = SKColor(red: 0.01, green: 0.01, blue: 0.02, alpha: 1.0)
+        } else {
+            screenBg.fillColor = status.color
+        }
 
         glowNode.fillColor = status.glowColor
         glowNode.alpha = status == .off ? 0 : 1
