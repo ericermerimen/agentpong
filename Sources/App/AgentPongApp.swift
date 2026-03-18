@@ -300,6 +300,9 @@ class FloatingWindowController {
 class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let windowController: FloatingWindowController
+    /// nil = not checked yet, set to a string like "Update: v1.1.0 available" when outdated
+    private var updateAvailable: String?
+    private var lastUpdateCheck: Date?
 
     init(windowController: FloatingWindowController) {
         self.windowController = windowController
@@ -319,6 +322,15 @@ class MenuBarController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem?.menu = menu
+
+        // Check for updates on launch (background, non-blocking)
+        checkBrewUpdate { [weak self] result in
+            DispatchQueue.main.async {
+                if let newVersion = result {
+                    self?.updateAvailable = "Update: v\(newVersion) available"
+                }
+            }
+        }
     }
 
     // MARK: - NSMenuDelegate
@@ -397,10 +409,17 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Version
-        let version = NSMenuItem(title: "AgentPong v\(AppVersion.display)", action: nil, keyEquivalent: "")
-        version.isEnabled = false
-        menu.addItem(version)
+        // Version + update check
+        let versionTitle = updateAvailable ?? "v\(AppVersion.display)"
+        let versionItem = NSMenuItem(title: versionTitle, action: #selector(checkForUpdates), keyEquivalent: "")
+        versionItem.target = self
+        if updateAvailable != nil {
+            versionItem.attributedTitle = NSAttributedString(
+                string: versionTitle,
+                attributes: [.foregroundColor: NSColor.systemOrange]
+            )
+        }
+        menu.addItem(versionItem)
 
         // Quit
         let quit = NSMenuItem(title: "Quit AgentPong", action: #selector(quitApp), keyEquivalent: "q")
@@ -426,6 +445,70 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func runSetup() {
         _ = handleSetup()
+    }
+
+    @objc private func checkForUpdates() {
+        if let update = updateAvailable {
+            // Already know there's an update -- show upgrade instructions
+            let alert = NSAlert()
+            alert.messageText = "Update Available"
+            alert.informativeText = "\(update)\n\nRun in terminal:\n  brew upgrade agentpong"
+            alert.addButton(withTitle: "Copy Command")
+            alert.addButton(withTitle: "OK")
+            alert.alertStyle = .informational
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("brew upgrade agentpong && brew services restart agentpong", forType: .string)
+            }
+        } else {
+            // Check now
+            updateAvailable = "Checking..."
+            checkBrewUpdate { [weak self] result in
+                DispatchQueue.main.async {
+                    if let newVersion = result {
+                        self?.updateAvailable = "Update: v\(newVersion) available"
+                    } else {
+                        // Show brief "up to date" then reset
+                        self?.updateAvailable = "v\(AppVersion.display) -- up to date"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                            self?.updateAvailable = nil
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check `brew info agentpong` for a newer version. Returns the new version or nil.
+    private func checkBrewUpdate(completion: @escaping (String?) -> Void) {
+        lastUpdateCheck = Date()
+        DispatchQueue.global(qos: .utility).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/brew")
+            task.arguments = ["info", "--json=v2", "agentpong"]
+            let pipe = Pipe()
+            task.standardOutput = pipe
+            task.standardError = FileHandle.nullDevice
+
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let formulae = json["formulae"] as? [[String: Any]],
+                   let formula = formulae.first,
+                   let versions = formula["versions"] as? [String: Any],
+                   let stable = versions["stable"] as? String {
+                    let current = AppVersion.display
+                    completion(stable != current ? stable : nil)
+                } else {
+                    completion(nil)
+                }
+            } catch {
+                completion(nil)
+            }
+        }
     }
 
     @objc private func quitApp() {

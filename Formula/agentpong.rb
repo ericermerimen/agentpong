@@ -23,28 +23,28 @@ class Agentpong < Formula
 
   def caveats
     <<~EOS
-      To start AgentPong and auto-launch on login:
+      Add to Applications (for Launchpad):
+
+        ln -sf $(brew --prefix)/opt/agentpong/AgentPong.app /Applications/AgentPong.app
+
+      Start AgentPong and auto-launch on login:
 
         brew services start agentpong
+
+      Setup Claude Code hooks:
+
+        agentpong setup
 
       After future upgrades:
 
         brew upgrade agentpong && brew services restart agentpong
-
-      Next steps:
-        1. Run: agentpong setup
-           (Installs hook script + configures Claude Code)
-        2. Restart your Claude Code sessions
-        3. The husky will start reacting to your sessions!
-
-      Optional: install jq for enhanced session tracking:
-        brew install jq
     EOS
   end
 
   def post_install
-    # Kill any running AgentPong so brew services restart picks up the new binary
     quiet_system "pkill", "-x", "AgentPong"
+    # Try to symlink to /Applications (may fail in sandbox -- caveats has fallback)
+    quiet_system "ln", "-sf", "#{opt_prefix}/AgentPong.app", "/Applications/AgentPong.app"
   end
 
   service do
