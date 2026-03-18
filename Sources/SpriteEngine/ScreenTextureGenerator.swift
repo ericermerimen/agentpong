@@ -77,7 +77,7 @@ final class ScreenTextureGenerator {
 
     /// Code editor: colored syntax lines on dark background
     private func generateCode() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             // Line number gutter
             ctx.setFillColor(CGColor(srgbRed: 0.08, green: 0.07, blue: 0.10, alpha: 1.0))
@@ -111,7 +111,7 @@ final class ScreenTextureGenerator {
 
     /// Terminal: green text on black
     private func generateTerminal() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             for y in stride(from: 3, to: h - 3, by: Int.random(in: 5...7)) {
                 let alpha = Double.random(in: 0.50...0.80)
@@ -134,7 +134,7 @@ final class ScreenTextureGenerator {
 
     /// Chat: message bubbles alternating sides
     private func generateChat() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             var y = 4
             var isLeft = true
@@ -158,7 +158,7 @@ final class ScreenTextureGenerator {
 
     /// Browser: address bar and content blocks
     private func generateBrowser() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             // Tab + address bar at top (scrolls away)
             ctx.setFillColor(CGColor(srgbRed: 0.07, green: 0.06, blue: 0.09, alpha: 1.0))
@@ -179,7 +179,7 @@ final class ScreenTextureGenerator {
 
     /// Music player: visualizer bars
     private func generateMusic() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             // Repeating visualizer sections
             for section in stride(from: 4, to: h - 4, by: 24) {
@@ -199,7 +199,7 @@ final class ScreenTextureGenerator {
 
     /// Social feed: post blocks with avatars
     private func generateSocial() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             var y = 4
             while y < h - 6 {
@@ -220,7 +220,7 @@ final class ScreenTextureGenerator {
 
     /// Chart: line graph with grid
     private func generateChart() -> CGImage? {
-        let w = 96, h = 192
+        let w = 96, h = 64
         return withContext(w: w, h: h) { ctx in
             // Grid
             for gy in stride(from: 10, to: h - 5, by: 16) {

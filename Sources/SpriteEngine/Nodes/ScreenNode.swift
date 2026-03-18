@@ -402,9 +402,10 @@ class ScreenNode: SKNode {
 
     /// Display a decorative texture inside the screen shape, hiding the status color fill.
     ///
-    /// Display a scrolling texture inside the screen.
-    /// The texture stays upright -- the trapezoid crop mask creates the
-    /// perspective effect by clipping the edges at the monitor's angle.
+    /// Display a static texture inside the screen.
+    /// Content stays upright and fills the trapezoid. The crop mask
+    /// clips edges to create natural perspective. Content swaps every
+    /// 45-60s via ScreenContentManager -- no constant scrolling.
     func showTexture(_ texture: SKTexture) {
         contentSprite?.removeFromParent()
         contentSprite = nil
@@ -416,32 +417,14 @@ class ScreenNode: SKNode {
         let maxY = max(localTopLeft.y, localTopRight.y)
         let w = maxX - minX
         let h = maxY - minY
-        let centerX = (minX + maxX) / 2
 
         texture.filteringMode = .nearest
 
-        // Texture is tall (3x screen height) for scrolling.
-        // Make it wider than the bounding box so the trapezoid crop
-        // has content to clip on both sides.
-        let texAspect = texture.size().height / texture.size().width
-        let spriteW = w * 1.15  // extra width so angled crop has content to cut
-        let spriteH = spriteW * texAspect
-
-        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: spriteW, height: spriteH))
-        sprite.anchorPoint = CGPoint(x: 0.5, y: 0.0)
-        sprite.position = CGPoint(x: centerX, y: minY)
-        sprite.zPosition = 1  // no rotation -- trapezoid crop IS the perspective
+        let sprite = SKSpriteNode(texture: texture, size: CGSize(width: w, height: h))
+        sprite.position = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+        sprite.zPosition = 1
         contentSprite = sprite
         cropNode.addChild(sprite)
-
-        // Slow upward scroll through the crop window
-        let scrollDistance = spriteH - h
-        if scrollDistance > 2 {
-            let scrollDuration = Double.random(in: 20...35)
-            let scroll = SKAction.moveBy(x: 0, y: scrollDistance, duration: scrollDuration)
-            let reset = SKAction.move(to: CGPoint(x: centerX, y: minY), duration: 0)
-            sprite.run(SKAction.repeatForever(SKAction.sequence([scroll, reset])), withKey: "scroll")
-        }
 
         statusLabel.isHidden = true
         detailLabel.isHidden = true
