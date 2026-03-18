@@ -2,7 +2,7 @@
 
 A macOS floating window showing a cozy pixel art room with a husky pet and reactive monitor screens. Monitors light up based on active Claude Code sessions. Click a screen to jump to that session or approve permissions. The husky reacts to screen states -- barks at errors, naps when idle.
 
-![AgentPong floating window](docs/screenshot.png)
+<img src="docs/screenshot.png" alt="AgentPong floating window" width="400">
 
 ## Features
 
