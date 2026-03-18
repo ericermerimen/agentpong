@@ -8,7 +8,7 @@ A cozy pixel art desktop pet for Claude Code. A husky lives in a tiny office on 
 
 *The "pong" to [AgentPing](https://github.com/ericermerimen/agentping) -- you ping your agents, this one pongs back.*
 
-<img src="docs/screenshot.png" alt="AgentPong floating window" width="400">
+<img src="site/screenshot.png" alt="AgentPong floating window" width="400">
 
 ## Features
 
