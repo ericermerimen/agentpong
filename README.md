@@ -6,6 +6,8 @@
 
 A cozy pixel art desktop pet for Claude Code. A husky lives in a tiny office on your screen, watching your coding sessions through miniature monitors that light up in real time. It barks at errors, tilts its head when you need to approve something, and naps when everything is quiet.
 
+*The "pong" to [AgentPing](https://github.com/ericermerimen/agentping) -- you ping your agents, this one pongs back.*
+
 <img src="docs/screenshot.png" alt="AgentPong floating window" width="400">
 
 ## Features
