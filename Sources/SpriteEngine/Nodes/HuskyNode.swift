@@ -201,6 +201,7 @@ class HuskyNode: SKNode {
         // Walk to dog bed, then transition to sleep
         walkTo(target: dogBedPosition, speed: 25) { [weak self] in
             self?.behavior = .sleeping
+            self?.startSleepBubbles()
             self?.playSleepAnimation()
         }
     }
@@ -209,6 +210,8 @@ class HuskyNode: SKNode {
         behavior = .idle
         sprite.removeAllActions()
         sprite.zRotation = 0
+        stopSleepBubbles()
+        showSpeechBubble("!", duration: 1.5)
 
         // Play sleep frames in reverse at SLEEP SCALE (don't scale up while
         // 128px texture is showing -- that makes the dog huge).
@@ -246,6 +249,7 @@ class HuskyNode: SKNode {
 
     private func reactToError() {
         guard behavior != .scared else { return }
+        stopSleepBubbles()
         behavior = .reactingToScreen
 
         // Walk to the top of the walkable floor (in front of desk), not behind the monitors.
@@ -254,6 +258,7 @@ class HuskyNode: SKNode {
             y: wanderZone.maxY - 5
         )
         walkTo(target: nearMonitor, speed: 50) { [weak self] in
+            self?.showSpeechBubble("Error!", duration: 2.0)
             self?.playBarkAnimation {
                 self?.transitionToIdle(delay: 3...6)
             }
@@ -271,6 +276,7 @@ class HuskyNode: SKNode {
             y: wanderZone.maxY - 5
         )
         walkTo(target: nearMonitor, speed: 35) { [weak self] in
+            self?.showSpeechBubble("Approve?", duration: 3.0)
             self?.playHeadTiltAnimation {
                 self?.transitionToIdle(delay: 4...8)
             }
@@ -370,6 +376,8 @@ class HuskyNode: SKNode {
         let wasSleeping = (behavior == .sleeping || behavior == .lyingDown)
         behavior = .scared
         removeAction(forKey: "wander")
+        stopSleepBubbles()
+        showSpeechBubble("!!", duration: 1.5)
         clearSpriteAnimations()
 
         // Pick farthest random point
@@ -886,6 +894,48 @@ class HuskyNode: SKNode {
         } else {
             return dy > 0 ? "north" : "south"
         }
+    }
+
+    // MARK: - Speech Bubbles
+
+    private static let bubbleName = "speechBubble"
+    private static let sleepBubblesKey = "sleepBubbles"
+
+    /// Show a speech bubble above the husky. Removes any existing bubble first.
+    func showSpeechBubble(_ text: String, duration: TimeInterval = 2.5, yOffset: CGFloat = 50) {
+        childNode(withName: Self.bubbleName)?.removeFromParent()
+
+        let bubble = SpeechBubbleNode(text: text)
+        bubble.name = Self.bubbleName
+        bubble.position = CGPoint(x: 0, y: yOffset)
+        bubble.zPosition = 100
+        addChild(bubble)
+        bubble.show(duration: duration)
+    }
+
+    /// Periodically show "zzz" while sleeping. Stops automatically if behavior changes.
+    private func startSleepBubbles() {
+        removeAction(forKey: Self.sleepBubblesKey)
+
+        // Show first one immediately, then repeat
+        showSpeechBubble("zzz", duration: 3.0, yOffset: 20)
+
+        let cycle = SKAction.sequence([
+            SKAction.wait(forDuration: 8.0),
+            SKAction.run { [weak self] in
+                guard self?.behavior == .sleeping else {
+                    self?.removeAction(forKey: Self.sleepBubblesKey)
+                    return
+                }
+                self?.showSpeechBubble("zzz", duration: 3.0, yOffset: 20)
+            },
+        ])
+        run(SKAction.repeatForever(cycle), withKey: Self.sleepBubblesKey)
+    }
+
+    private func stopSleepBubbles() {
+        removeAction(forKey: Self.sleepBubblesKey)
+        childNode(withName: Self.bubbleName)?.removeFromParent()
     }
 
     // MARK: - Shadow Texture
