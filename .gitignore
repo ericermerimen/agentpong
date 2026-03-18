@@ -7,3 +7,5 @@ Assets/
 DerivedData/
 .DS_Store
 .gstack/
+.ionide/
+.fable/
