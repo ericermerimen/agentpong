@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release app bundle
+        run: ./Scripts/build-app.sh release
+
+      - name: Create tarball
+        run: |
+          VERSION="${{ github.ref_name }}"
+          mkdir -p pkg
+          cp -R build/AgentPong.app pkg/
+          cp LICENSE pkg/ 2>/dev/null || true
+          tar -czf "AgentPong-${VERSION}-macos.tar.gz" -C pkg AgentPong.app LICENSE
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          echo "app_sha=$(shasum -a 256 AgentPong-${{ github.ref_name }}-macos.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          files: |
+            AgentPong-${{ github.ref_name }}-macos.tar.gz
+          body: |
+            ## Install
+
+            **Homebrew (recommended):**
+            ```bash
+            brew tap ericermerimen/tap
+            brew install agentpong
+            brew services start agentpong
+            agentpong setup
+            ```
+
+            **From source:**
+            ```bash
+            git clone https://github.com/ericermerimen/agentpong.git
+            cd agentpong
+            make install
+            ```
+
+            ## SHA256
+            - `AgentPong-${{ github.ref_name }}-macos.tar.gz`: `${{ steps.sha.outputs.app_sha }}`
+
+      - name: Update Homebrew tap formula
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        if: env.TAP_TOKEN != '' && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc')
+        run: |
+          VERSION="${{ github.ref_name }}"
+          SHA="${{ steps.sha.outputs.app_sha }}"
+          URL="https://github.com/ericermerimen/agentpong/releases/download/${VERSION}/AgentPong-${VERSION}-macos.tar.gz"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/ericermerimen/homebrew-tap.git" /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
+
+          mkdir -p Formula
+
+          cat > Formula/agentpong.rb << FORMULA
+          class Agentpong < Formula
+            desc "Pixel art room with husky pet that monitors Claude Code sessions"
+            homepage "https://github.com/ericermerimen/agentpong"
+            url "${URL}"
+            sha256 "${SHA}"
+
+            depends_on :macos
+            depends_on macos: :sonoma
+
+            def install
+              prefix.install "AgentPong.app"
+              bin.install_symlink prefix/"AgentPong.app/Contents/MacOS/AgentPong" => "agentpong"
+            end
+
+            def caveats
+              <<~EOS
+                Start AgentPong and auto-launch on login:
+
+                  brew services start agentpong
+
+                Setup Claude Code hooks:
+
+                  agentpong setup
+
+                After future upgrades:
+
+                  brew upgrade agentpong && brew services restart agentpong
+              EOS
+            end
+
+            def post_install
+              quiet_system "pkill", "-x", "AgentPong"
+              quiet_system "rm", "-rf", "/Applications/AgentPong.app"
+              quiet_system "cp", "-R", "#{opt_prefix}/AgentPong.app", "/Applications/AgentPong.app"
+            end
+
+            service do
+              run [opt_prefix/"AgentPong.app/Contents/MacOS/AgentPong"]
+              keep_alive true
+              log_path var/"log/agentpong.log"
+              error_log_path var/"log/agentpong-error.log"
+            end
+          end
+          FORMULA
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agentpong.rb
+          git commit -m "Update agentpong to ${VERSION}" || true
+          git push
