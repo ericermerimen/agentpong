@@ -25,7 +25,7 @@ class Agentpong < Formula
     <<~EOS
       Add to Applications (for Launchpad):
 
-        ln -sf $(brew --prefix)/opt/agentpong/AgentPong.app /Applications/AgentPong.app
+        cp -R $(brew --prefix)/opt/agentpong/AgentPong.app /Applications/
 
       Start AgentPong and auto-launch on login:
 
@@ -43,8 +43,9 @@ class Agentpong < Formula
 
   def post_install
     quiet_system "pkill", "-x", "AgentPong"
-    # Try to symlink to /Applications (may fail in sandbox -- caveats has fallback)
-    quiet_system "ln", "-sf", "#{opt_prefix}/AgentPong.app", "/Applications/AgentPong.app"
+    # Copy to /Applications so it appears as a real app (not alias) in Launchpad
+    quiet_system "rm", "-rf", "/Applications/AgentPong.app"
+    quiet_system "cp", "-R", "#{opt_prefix}/AgentPong.app", "/Applications/AgentPong.app"
   end
 
   service do
