@@ -125,6 +125,15 @@ class BorderlessPanel: NSPanel {
     }
 
     @objc private func quitApp() {
+        // Remove launchd job so KeepAlive doesn't restart us after quit.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["remove", "homebrew.mxcl.agentpong"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+
         NSApplication.shared.terminate(nil)
     }
 
@@ -488,6 +497,16 @@ class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quitApp() {
+        // Remove launchd job so KeepAlive doesn't restart us after quit.
+        // No-op if not running under brew services.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["remove", "homebrew.mxcl.agentpong"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+
         NSApplication.shared.terminate(nil)
     }
 }
