@@ -300,9 +300,8 @@ class FloatingWindowController {
 class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let windowController: FloatingWindowController
-    /// nil = not checked yet, set to a string like "Update: v1.1.0 available" when outdated
+    /// Set to the new version string (e.g. "1.1.0") when brew has a newer version.
     private var updateAvailable: String?
-    private var lastUpdateCheck: Date?
 
     init(windowController: FloatingWindowController) {
         self.windowController = windowController
@@ -324,13 +323,7 @@ class MenuBarController: NSObject, NSMenuDelegate {
         statusItem?.menu = menu
 
         // Check for updates on launch (background, non-blocking)
-        checkBrewUpdate { [weak self] result in
-            DispatchQueue.main.async {
-                if let newVersion = result {
-                    self?.updateAvailable = "Update: v\(newVersion) available"
-                }
-            }
-        }
+        checkBrewUpdate()
     }
 
     // MARK: - NSMenuDelegate
@@ -409,16 +402,20 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Version + update check
-        let versionTitle = updateAvailable ?? "v\(AppVersion.display)"
-        let versionItem = NSMenuItem(title: versionTitle, action: #selector(checkForUpdates), keyEquivalent: "")
-        versionItem.target = self
-        if updateAvailable != nil {
-            versionItem.attributedTitle = NSAttributedString(
-                string: versionTitle,
+        // Update notification (only shown when an update is available)
+        if let newVersion = updateAvailable {
+            let updateItem = NSMenuItem(title: "Update to \(newVersion)", action: #selector(copyUpgradeCommand), keyEquivalent: "")
+            updateItem.target = self
+            updateItem.attributedTitle = NSAttributedString(
+                string: "Update to \(newVersion)",
                 attributes: [.foregroundColor: NSColor.systemOrange]
             )
+            menu.addItem(updateItem)
         }
+
+        // Version (static, not clickable)
+        let versionItem = NSMenuItem(title: "AgentPong v\(AppVersion.display)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
         menu.addItem(versionItem)
 
         // Quit
@@ -447,45 +444,26 @@ class MenuBarController: NSObject, NSMenuDelegate {
         _ = handleSetup()
     }
 
-    @objc private func checkForUpdates() {
-        if let update = updateAvailable {
-            // Already know there's an update -- show upgrade instructions
-            let alert = NSAlert()
-            alert.messageText = "Update Available"
-            alert.informativeText = "\(update)\n\nRun in terminal:\n  brew upgrade agentpong"
-            alert.addButton(withTitle: "Copy Command")
-            alert.addButton(withTitle: "OK")
-            alert.alertStyle = .informational
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("brew upgrade agentpong && brew services restart agentpong", forType: .string)
-            }
-        } else {
-            // Check now
-            updateAvailable = "Checking..."
-            checkBrewUpdate { [weak self] result in
-                DispatchQueue.main.async {
-                    if let newVersion = result {
-                        self?.updateAvailable = "Update: v\(newVersion) available"
-                    } else {
-                        // Show brief "up to date" then reset
-                        self?.updateAvailable = "v\(AppVersion.display) -- up to date"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                            self?.updateAvailable = nil
-                        }
-                    }
-                }
-            }
-        }
+    @objc private func copyUpgradeCommand() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("brew upgrade agentpong && brew services restart agentpong", forType: .string)
+
+        let alert = NSAlert()
+        alert.messageText = "Upgrade command copied"
+        alert.informativeText = "Paste in terminal:\nbrew upgrade agentpong && brew services restart agentpong"
+        alert.addButton(withTitle: "OK")
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
-    /// Check `brew info agentpong` for a newer version. Returns the new version or nil.
-    private func checkBrewUpdate(completion: @escaping (String?) -> Void) {
-        lastUpdateCheck = Date()
-        DispatchQueue.global(qos: .utility).async {
+    /// Check `brew info agentpong` for a newer version in the background.
+    private func checkBrewUpdate() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let brewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+            guard let brewPath = brewPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return }
+
             let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/brew")
+            task.executableURL = URL(fileURLWithPath: brewPath)
             task.arguments = ["info", "--json=v2", "agentpong"]
             let pipe = Pipe()
             task.standardOutput = pipe
@@ -499,15 +477,13 @@ class MenuBarController: NSObject, NSMenuDelegate {
                    let formulae = json["formulae"] as? [[String: Any]],
                    let formula = formulae.first,
                    let versions = formula["versions"] as? [String: Any],
-                   let stable = versions["stable"] as? String {
-                    let current = AppVersion.display
-                    completion(stable != current ? stable : nil)
-                } else {
-                    completion(nil)
+                   let stable = versions["stable"] as? String,
+                   stable != AppVersion.display {
+                    DispatchQueue.main.async {
+                        self?.updateAvailable = stable
+                    }
                 }
-            } catch {
-                completion(nil)
-            }
+            } catch {}
         }
     }
 
