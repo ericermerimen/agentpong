@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>AgentPong -- A desktop companion for Claude Code</title>
+    <meta name="description" content="A macOS floating widget that shows your Claude Code sessions as a cozy pixel art room. Monitors react to session status. A husky pet reacts to what's happening.">
+    <meta name="theme-color" content="#0c0c10">
+    <meta property="og:title" content="AgentPong">
+    <meta property="og:description" content="A desktop companion for Claude Code. A cozy pixel art room where monitors react to your sessions and a husky pet reacts to what's happening.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='4' y='6' width='24' height='18' rx='3' fill='%230c0c10' stroke='%23f0a030' stroke-width='2'/><rect x='8' y='10' width='5' height='3' rx='1' fill='%234ade80'/><rect x='15' y='10' width='5' height='3' rx='1' fill='%23fbbf24'/><rect x='8' y='15' width='5' height='3' rx='1' fill='%23f87171'/><rect x='15' y='15' width='5' height='3' rx='1' fill='%2385818a'/><rect x='10' y='24' width='12' height='2' rx='1' fill='%2385818a'/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0c0c10;
+            --bg-surface: #141418;
+            --bg-card: #1a1a20;
+            --amber: #f0a030;
+            --green: #4ade80;
+            --yellow: #fbbf24;
+            --red: #f87171;
+            --text: #e6e1da;
+            --text-secondary: #9a9498;
+            --text-dim: #85818a;
+            --border: rgba(255,255,255,0.07);
+            --font: 'Outfit', system-ui, -apple-system, sans-serif;
+            --mono: 'Fira Code', ui-monospace, monospace;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            scroll-padding-top: 60px;
+        }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        h1, h2, h3 { text-wrap: balance; }
+        p { text-wrap: pretty; }
+
+        a { color: var(--amber); text-decoration: none; text-underline-offset: 3px; }
+        a:hover { text-decoration: underline; }
+
+        ::selection { background: rgba(240, 160, 48, 0.3); }
+
+        :focus-visible {
+            outline: 2px solid var(--amber);
+            outline-offset: 2px;
+        }
+
+        .container { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+        /* ── NAV ── */
+        nav {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: rgba(12, 12, 16, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 0;
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-logo {
+            font-weight: 700;
+            font-size: 16px;
+            color: var(--text);
+            letter-spacing: -0.3px;
+        }
+        .nav-right { display: flex; align-items: center; gap: 20px; }
+        .nav-right a {
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+        }
+        .nav-right a:hover { color: var(--text); text-decoration: none; }
+        .github-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .github-link svg { width: 16px; height: 16px; fill: currentColor; }
+        .skip-link {
+            position: absolute;
+            top: -100%;
+            left: 16px;
+            background: var(--amber);
+            color: #0c0c10;
+            padding: 8px 16px;
+            border-radius: 0 0 6px 6px;
+            font-weight: 600;
+            font-size: 14px;
+            z-index: 100;
+            text-decoration: none;
+        }
+        .skip-link:focus { top: 0; }
+
+        /* ── HERO ── */
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .hero {
+            padding: 72px 0 40px;
+            text-align: center;
+        }
+        .hero > .container > * {
+            animation: fade-up 0.5s ease-out both;
+        }
+        .hero > .container > :nth-child(2) { animation-delay: 0.07s; }
+        .hero > .container > :nth-child(3) { animation-delay: 0.14s; }
+        .hero > .container > :nth-child(4) { animation-delay: 0.21s; }
+        .hero > .container > :nth-child(5) { animation-delay: 0.28s; }
+        .hero h1 {
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            line-height: 1.2;
+            margin-bottom: 12px;
+        }
+        .hero .subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            max-width: 500px;
+            margin: 0 auto 32px;
+            line-height: 1.5;
+        }
+
+        /* Video */
+        .demo-wrap {
+            max-width: 480px;
+            margin: 0 auto 36px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow:
+                0 0 0 1px rgba(255,255,255,0.06),
+                0 24px 80px rgba(0,0,0,0.5);
+        }
+        .demo-wrap video {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: var(--bg-card);
+        }
+
+        /* CTAs */
+        .ctas {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 22px;
+            font-family: var(--font);
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.15s;
+            text-decoration: none;
+        }
+        .btn:hover { transform: translateY(-1px); text-decoration: none; }
+        .btn:active { transform: translateY(0); }
+        .btn-primary {
+            background: var(--amber);
+            color: #0c0c10;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 16px rgba(240, 160, 48, 0.25);
+            color: #0c0c10;
+        }
+        .btn-outline {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-outline:hover {
+            border-color: rgba(255,255,255,0.15);
+            color: var(--text);
+        }
+        .install-hint {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+        .install-hint code {
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            padding: 3px 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        /* ── DIVIDER ── */
+        .divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 0;
+        }
+
+        /* ── STATUS ── */
+        .status-section { padding: 56px 0; }
+        .status-section h2 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            margin-bottom: 28px;
+        }
+        .status-list {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            margin-bottom: 40px;
+        }
+        .status-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+        .status-item .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            margin-top: 8px;
+        }
+        .status-item .dot.green { background: var(--green); box-shadow: 0 0 8px rgba(74,222,128,0.4); }
+        .status-item .dot.yellow { background: var(--yellow); box-shadow: 0 0 8px rgba(251,191,36,0.4); }
+        .status-item .dot.red { background: var(--red); box-shadow: 0 0 8px rgba(248,113,113,0.4); }
+        .status-item strong {
+            color: var(--text);
+            white-space: nowrap;
+        }
+        .status-item .desc {
+            color: var(--text-secondary);
+        }
+
+        /* ── FEATURES ── */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 40px;
+            max-width: 460px;
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        /* ── INSTALL ── */
+        .install-section {
+            padding: 64px 0;
+            background: var(--bg-surface);
+            scroll-margin-top: 60px;
+        }
+        .install-section h2 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        .install-section .sub {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .install-tabs {
+            display: inline-flex;
+            gap: 2px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 3px;
+            margin: 0 auto 16px;
+        }
+        .install-section .center { text-align: center; }
+        .install-tab {
+            padding: 6px 18px;
+            font-family: var(--font);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dim);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: color 0.2s, background 0.2s;
+        }
+        .install-tab.active { background: rgba(255,255,255,0.06); color: var(--text); }
+        .install-tab:hover:not(.active) { color: var(--text-secondary); }
+        .install-tab:active { background: rgba(255,255,255,0.04); }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .terminal {
+            max-width: 560px;
+            margin: 0 auto;
+            background: #0e0e12;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .terminal-bar {
+            background: #16161c;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tdot { width: 10px; height: 10px; border-radius: 50%; }
+        .tdot.r { background: #ff5f57; }
+        .tdot.y { background: #febc2e; }
+        .tdot.g { background: #28c840; }
+        .terminal-title { color: var(--text-dim); font-size: 12px; margin-left: 8px; font-family: var(--mono); }
+        .terminal pre {
+            padding: 18px 22px;
+            margin: 0;
+            overflow-x: auto;
+        }
+        .terminal code {
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.9;
+            color: var(--text);
+        }
+        .terminal .p { color: var(--green); user-select: none; }
+        .terminal .c { color: var(--text-dim); }
+        .terminal-footer {
+            padding: 0 22px 12px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .copy-btn {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-dim);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 3px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .copy-btn:hover { color: var(--text-secondary); }
+        .copy-btn:active { transform: scale(0.97); }
+        .copy-btn.copied { color: var(--green); }
+
+        /* ── HOW IT WORKS ── */
+        .how-section { padding: 48px 0; scroll-margin-top: 60px; }
+        .how-section h2 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            margin-bottom: 20px;
+        }
+        .flow-block {
+            background: #0e0e12;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin-bottom: 16px;
+        }
+        .flow-block code {
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--text);
+            white-space: pre;
+        }
+        .flow-block .dim { color: var(--text-dim); }
+        .flow-desc {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            max-width: 600px;
+        }
+        .flow-desc code {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--text);
+            background: var(--bg-card);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        /* ── FOOTER ── */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 32px 0;
+        }
+        footer .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        footer p { font-size: 13px; color: var(--text-dim); }
+        footer .links { display: flex; gap: 20px; }
+        footer .links a { color: var(--text-secondary); font-size: 13px; text-decoration: none; }
+        footer .links a:hover { color: var(--text); }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 900px) {
+            .hero { padding: 56px 0 36px; }
+        }
+
+        @media (max-width: 700px) {
+            .container { padding: 0 20px; }
+            .nav-link-how { display: none; }
+            .hero { padding: 48px 0 32px; }
+            .demo-wrap { max-width: 100%; }
+            .status-section { padding: 40px 0; }
+            .feature-grid { grid-template-columns: 1fr; max-width: none; }
+            .install-section { padding: 48px 0; }
+            .how-section { padding: 36px 0; }
+            .flow-block { max-width: 100%; }
+            .flow-sub { display: none; }
+            .flow-line { white-space: pre-wrap; word-break: break-word; }
+            footer .container { flex-direction: column; gap: 12px; text-align: center; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-delay: 0ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to content</a>
+
+<nav>
+    <div class="container">
+        <span class="nav-logo">AgentPong</span>
+        <div class="nav-right">
+            <a href="#how" class="nav-link-how">How it works</a>
+            <a href="#install">Install</a>
+            <a href="https://github.com/ericermerimen/agentpong" target="_blank" rel="noopener" class="github-link">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                GitHub
+            </a>
+        </div>
+    </div>
+</nav>
+
+<main id="main">
+
+<section class="hero">
+    <div class="container">
+        <h1>A desktop companion for Claude Code</h1>
+        <p class="subtitle">A floating macOS widget where your sessions live as a cozy pixel art room. Monitors react to status. The husky reacts to everything.</p>
+
+        <div class="demo-wrap">
+            <video autoplay loop muted playsinline preload="auto">
+                <source src="agentpong.mp4" type="video/mp4">
+                Your browser does not support video. <a href="agentpong.mp4">Download the demo</a>.
+            </video>
+        </div>
+
+        <div class="ctas">
+            <a href="#install" class="btn btn-primary">Install with Homebrew</a>
+            <a href="https://github.com/ericermerimen/agentpong" class="btn btn-outline" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <p class="install-hint">or <code>brew install agentpong</code></p>
+    </div>
+</section>
+
+<hr class="divider">
+
+<section class="status-section">
+    <div class="container">
+        <h2>What the monitors show</h2>
+        <div class="status-list">
+            <div class="status-item">
+                <span class="dot green"></span>
+                <div><strong>Running</strong> <span class="desc">&mdash; Sessions are working. Code being written, tests passing. The husky wags its tail.</span></div>
+            </div>
+            <div class="status-item">
+                <span class="dot yellow"></span>
+                <div><strong>Needs input</strong> <span class="desc">&mdash; A session needs permission or input. Click to approve right from the widget.</span></div>
+            </div>
+            <div class="status-item">
+                <span class="dot red"></span>
+                <div><strong>Error</strong> <span class="desc">&mdash; Something broke. Click the monitor to jump straight to the problem. The husky barks.</span></div>
+            </div>
+        </div>
+
+        <div class="feature-grid">
+            <span>Click to jump to session</span>
+            <span>Approve permissions inline</span>
+            <span>12+ pet behaviors</span>
+            <span>Real-time hook events</span>
+            <span>Always on top</span>
+            <span>Two size presets</span>
+            <span>Zero dependencies</span>
+            <span>Pure Swift</span>
+        </div>
+    </div>
+</section>
+
+<section class="install-section" id="install">
+    <div class="container">
+        <h2>Get started</h2>
+        <p class="sub">macOS 14 (Sonoma) or later. Takes under a minute.</p>
+
+        <div class="center">
+            <div class="install-tabs" role="tablist">
+                <button class="install-tab active" data-tab="brew" role="tab" aria-selected="true" aria-controls="panel-brew" tabindex="0">Homebrew</button>
+                <button class="install-tab" data-tab="source" role="tab" aria-selected="false" aria-controls="panel-source" tabindex="-1">From Source</button>
+            </div>
+        </div>
+
+        <div class="tab-panel active" data-panel="brew" id="panel-brew" role="tabpanel">
+            <div class="terminal">
+                <div class="terminal-bar">
+                    <span class="tdot r"></span>
+                    <span class="tdot y"></span>
+                    <span class="tdot g"></span>
+                    <span class="terminal-title">Terminal</span>
+                </div>
+                <pre><code><span class="p">$ </span>brew tap ericermerimen/tap
+<span class="p">$ </span>brew install agentpong
+<span class="p">$ </span>agentpong setup
+<span class="c"># Restart your Claude Code sessions</span></code></pre>
+                <div class="terminal-footer">
+                    <button class="copy-btn" data-copy="brew tap ericermerimen/tap && brew install agentpong && agentpong setup">Copy</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-panel" data-panel="source" id="panel-source" role="tabpanel">
+            <div class="terminal">
+                <div class="terminal-bar">
+                    <span class="tdot r"></span>
+                    <span class="tdot y"></span>
+                    <span class="tdot g"></span>
+                    <span class="terminal-title">Terminal</span>
+                </div>
+                <pre><code><span class="p">$ </span>git clone https://github.com/ericermerimen/agentpong.git
+<span class="p">$ </span>cd agentpong
+<span class="p">$ </span>make install
+<span class="c"># Builds .app, links to /Applications, runs setup</span></code></pre>
+                <div class="terminal-footer">
+                    <button class="copy-btn" data-copy="git clone https://github.com/ericermerimen/agentpong.git && cd agentpong && make install">Copy</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<hr class="divider">
+
+<section class="how-section" id="how">
+    <div class="container">
+        <h2>How it works</h2>
+        <div class="flow-block">
+            <code><span class="flow-line">Claude Code  <span class="dim">&rarr;</span>  hook-sender.sh  <span class="dim">&rarr;</span>  localhost:49152  <span class="dim">&rarr;</span>  pixel art room</span>
+<span class="flow-sub dim">(hook events)     (stdin &rarr; curl)      (AgentPong HTTP)     (SpriteKit 60fps)</span></code>
+        </div>
+        <p class="flow-desc">Claude Code fires JSON events on every action via hooks. <code>hook-sender.sh</code> pipes them to AgentPong's local server. Monitors update, textures rotate, the husky reacts. Backup polling every 5s if hooks miss anything.</p>
+    </div>
+</section>
+
+</main>
+
+<footer>
+    <div class="container">
+        <p>AgentPong &middot; PolyForm Noncommercial 1.0.0</p>
+        <div class="links">
+            <a href="https://github.com/ericermerimen/agentpong" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/ericermerimen/agentpong/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+    </div>
+</footer>
+
+<script>
+function activateTab(tab) {
+    document.querySelectorAll('.install-tab').forEach(t => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+        t.setAttribute('tabindex', '-1');
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    tab.setAttribute('aria-selected', 'true');
+    tab.setAttribute('tabindex', '0');
+    document.querySelector(`[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+}
+
+document.querySelectorAll('.install-tab').forEach(tab => {
+    tab.addEventListener('click', () => activateTab(tab));
+});
+
+document.querySelector('.install-tabs').addEventListener('keydown', e => {
+    const tabs = [...document.querySelectorAll('.install-tab')];
+    const current = tabs.findIndex(t => t.classList.contains('active'));
+    let next;
+    if (e.key === 'ArrowRight') next = (current + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    activateTab(tabs[next]);
+    tabs[next].focus();
+});
+
+document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+        });
+    });
+});
+</script>
+
+</body>
+</html>
