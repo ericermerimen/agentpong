@@ -740,6 +740,7 @@ public class OfficeScene: SKScene {
         screen.showPermissionBubble(text: toolDesc) { [weak self] allowed in
             respond(HookDecision(allow: allowed))
             self?.pendingPermissions.removeValue(forKey: event.sessionId)
+            self?.resolvePermission(sessionId: event.sessionId)
         }
 
         // Auto-allow after 5 minutes
@@ -748,6 +749,20 @@ public class OfficeScene: SKScene {
             respond(HookDecision(allow: true, reason: "auto-allowed: user did not respond in 5 minutes"))
             self?.pendingPermissions.removeValue(forKey: event.sessionId)
             screen.removePermissionBubble()
+            self?.resolvePermission(sessionId: event.sessionId)
+        }
+    }
+
+    /// Called after any permission decision (allow or deny).
+    /// Writes the session back to "active" so the UI stops showing "waiting"
+    /// even if no follow-up hook event arrives (blocked tools don't fire PostToolUse).
+    private func resolvePermission(sessionId: String) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let writer = SessionWriter()
+            try? writer.report(sessionId: sessionId, event: "active")
+            DispatchQueue.main.async { [weak self] in
+                self?.refreshSessions()
+            }
         }
     }
 

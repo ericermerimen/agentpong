@@ -627,8 +627,13 @@ func handleSetup() -> Bool {
     let scriptContent = """
     #!/bin/bash
     set -euo pipefail
+    HEADERS_FILE=$(mktemp /tmp/agentpong-hook-headers.XXXXXX)
+    trap 'rm -f "$HEADERS_FILE"' EXIT
     PORT_FILE="$HOME/.agentpong/server-port"
     PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "52775")
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+      PORT=52775
+    fi
     URL="http://localhost:${PORT}/hook"
     INPUT=$(cat)
     if command -v jq >/dev/null 2>&1; then
@@ -644,14 +649,12 @@ func handleSetup() -> Bool {
     else
       TIMEOUT=5
     fi
-    RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" -X POST -H "Content-Type: application/json" -D /dev/stderr -d @- "$URL" 2>/tmp/agentpong-hook-headers.$$ || true)
+    RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" -X POST -H "Content-Type: application/json" -D "$HEADERS_FILE" -d @- "$URL" 2>/dev/null) || exit 0
     if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ] && [ -n "$RESPONSE" ]; then
       echo "$RESPONSE"
-      EXIT_CODE=$(grep -i "X-Hook-Exit-Code" /tmp/agentpong-hook-headers.$$ 2>/dev/null | tr -dc '0-9' || echo "0")
-      rm -f /tmp/agentpong-hook-headers.$$
+      EXIT_CODE=$(grep -i "X-Hook-Exit-Code" "$HEADERS_FILE" 2>/dev/null | tr -dc '0-9' || echo "0")
       exit "${EXIT_CODE:-0}"
     fi
-    rm -f /tmp/agentpong-hook-headers.$$ 2>/dev/null
     exit 0
     """
 
@@ -676,19 +679,26 @@ func handleSetup() -> Bool {
     }
 
     let hookPath = hookScript.path
-    let hookEvents = [
-        "SessionStart", "SessionEnd", "Stop",
-        "PreToolUse", "PostToolUse",
-        "Notification"
+    // PreToolUse needs longer timeout for permission waits (script blocks up to 300s).
+    // All other events use 10s (buffer over the script's 5s curl timeout).
+    let hookEvents: [(String, Int?)] = [
+        ("SessionStart", 10), ("SessionEnd", 10), ("Stop", 10),
+        ("PreToolUse", nil),  // uses Claude Code default (10min) -- permission waits can be long
+        ("PostToolUse", 10),
+        ("Notification", 10)
     ]
 
     var hooks = settings["hooks"] as? [String: Any] ?? [:]
     // Claude Code hooks format: each event has an array of hook groups.
     // Each group has an optional "matcher" and a "hooks" array of command entries.
-    let agentPongGroup: [String: Any] = [
-        "hooks": [["type": "command", "command": hookPath]]
-    ]
-    for event in hookEvents {
+    for (event, timeout) in hookEvents {
+        var hookEntry: [String: Any] = ["type": "command", "command": hookPath]
+        if let timeout = timeout {
+            hookEntry["timeout"] = timeout
+        }
+        let agentPongGroup: [String: Any] = [
+            "hooks": [hookEntry]
+        ]
         var eventGroups = hooks[event] as? [[String: Any]] ?? []
         // Don't duplicate: remove any existing AgentPong hook group
         eventGroups.removeAll { group in
@@ -716,7 +726,7 @@ func handleSetup() -> Bool {
     print("AgentPong hooks installed!")
     print("  Hook script: \(hookPath)")
     print("  Claude settings updated: \(claudeSettings.path)")
-    print("  Events: \(hookEvents.joined(separator: ", "))")
+    print("  Events: \(hookEvents.map(\.0).joined(separator: ", "))")
     print("\nRestart Claude Code for hooks to take effect.")
     return true
 }

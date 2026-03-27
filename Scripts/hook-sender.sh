@@ -16,10 +16,18 @@
 
 set -euo pipefail
 
+# Temp file for response headers (mktemp avoids race conditions between
+# concurrent hook invocations that share the same PID)
+HEADERS_FILE=$(mktemp /tmp/agentpong-hook-headers.XXXXXX)
+trap 'rm -f "$HEADERS_FILE"' EXIT
+
 # Read port from server-port file (written by AgentPong on startup).
-# Falls back to default port if file doesn't exist.
+# Falls back to default port if file doesn't exist or contains garbage.
 PORT_FILE="$HOME/.agentpong/server-port"
 PORT=$(cat "$PORT_FILE" 2>/dev/null || echo "52775")
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+  PORT=52775
+fi
 URL="http://localhost:${PORT}/hook"
 
 # Read the full JSON payload from stdin (Claude Code pipes it in)
@@ -38,6 +46,7 @@ else
   PERM_MODE=$(echo "$INPUT" | grep -o '"permission_mode"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*: *"//;s/"//' || echo "")
 fi
 
+# Permission events get longer timeout (server holds connection until user decides)
 if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ]; then
   TIMEOUT=300
 else
@@ -46,21 +55,20 @@ fi
 
 # Forward the stdin JSON directly to AgentPong -- no string interpolation,
 # no injection risk. curl -d @- reads the body from stdin.
+# Headers go to HEADERS_FILE for exit code extraction; curl errors go to /dev/null.
 RESPONSE=$(echo "$INPUT" | curl -s --max-time "$TIMEOUT" \
   -X POST \
   -H "Content-Type: application/json" \
-  -D /dev/stderr \
+  -D "$HEADERS_FILE" \
   -d @- \
-  "$URL" 2>/tmp/agentpong-hook-headers.$$ || true)
+  "$URL" 2>/dev/null) || exit 0
 
 # For permission events, output the decision JSON and set exit code
 if [ "$EVENT_NAME" = "PreToolUse" ] && [ "$PERM_MODE" = "ask" ] && [ -n "$RESPONSE" ]; then
   echo "$RESPONSE"
   # Read exit code from response header
-  EXIT_CODE=$(grep -i "X-Hook-Exit-Code" /tmp/agentpong-hook-headers.$$ 2>/dev/null | tr -dc '0-9' || echo "0")
-  rm -f /tmp/agentpong-hook-headers.$$
+  EXIT_CODE=$(grep -i "X-Hook-Exit-Code" "$HEADERS_FILE" 2>/dev/null | tr -dc '0-9' || echo "0")
   exit "${EXIT_CODE:-0}"
 fi
 
-rm -f /tmp/agentpong-hook-headers.$$ 2>/dev/null
 exit 0
