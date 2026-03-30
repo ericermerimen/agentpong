@@ -66,6 +66,14 @@ if [ -f "Resources/AppIcon.icns" ]; then
     cp "Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
 fi
 
+# Embed Sparkle.framework for auto-updates
+SPARKLE_FW=".build/${CONFIG}/Sparkle.framework"
+if [ -d "$SPARKLE_FW" ]; then
+    mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+    cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
+    echo "Embedded Sparkle.framework"
+fi
+
 # Generate Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -97,6 +105,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <true/>
     <key>NSAccessibilityUsageDescription</key>
     <string>AgentPong needs accessibility access to focus terminal windows when you click on a session.</string>
+    <key>SUFeedURL</key>
+    <string>https://ericermerimen.github.io/agentpong/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>MFXKZi9wP1qC2tGJMxbKyBTma6Ei0Tdbu0odkIbT9fQ=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>
 PLIST
@@ -107,6 +121,12 @@ echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 # Codesign if requested
 if [ "$SIGN" = "sign" ]; then
     echo "Signing..."
+    # Sign embedded frameworks first (inside-out signing)
+    if [ -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" ]; then
+        codesign -f -s "Developer ID Application" \
+            -o runtime \
+            "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+    fi
     codesign -f -s "Developer ID Application" \
         -o runtime \
         "$APP_BUNDLE/Contents/MacOS/$APP_NAME"

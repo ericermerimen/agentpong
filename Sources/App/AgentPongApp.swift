@@ -2,6 +2,7 @@ import AppKit
 import SpriteKit
 import SpriteEngine
 import Shared
+import Sparkle
 
 // MARK: - Window Size Presets
 
@@ -309,11 +310,18 @@ class FloatingWindowController {
 class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let windowController: FloatingWindowController
-    /// Set to the new version string (e.g. "1.1.0") when brew has a newer version.
-    private var updateAvailable: String?
+    /// Sparkle updater controller for auto-updates
+    private let updaterController: SPUStandardUpdaterController
 
     init(windowController: FloatingWindowController) {
         self.windowController = windowController
+        // startingUpdater: true starts the update cycle automatically.
+        // updaterDelegate/userDriverDelegate: nil uses defaults (fine for menu bar apps).
+        self.updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
         super.init()
     }
 
@@ -330,9 +338,6 @@ class MenuBarController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem?.menu = menu
-
-        // Check for updates on launch (background, non-blocking)
-        checkBrewUpdate()
     }
 
     // MARK: - NSMenuDelegate
@@ -411,16 +416,14 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Update notification (only shown when an update is available)
-        if let newVersion = updateAvailable {
-            let updateItem = NSMenuItem(title: "Update to \(newVersion)", action: #selector(copyUpgradeCommand), keyEquivalent: "")
-            updateItem.target = self
-            updateItem.attributedTitle = NSAttributedString(
-                string: "Update to \(newVersion)",
-                attributes: [.foregroundColor: NSColor.systemOrange]
-            )
-            menu.addItem(updateItem)
-        }
+        // Check for Updates (Sparkle)
+        let checkUpdatesItem = NSMenuItem(
+            title: "Check for Updates...",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkUpdatesItem.target = updaterController
+        menu.addItem(checkUpdatesItem)
 
         // Version (static, not clickable)
         let versionItem = NSMenuItem(title: "AgentPong v\(AppVersion.display)", action: nil, keyEquivalent: "")
@@ -451,49 +454,6 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func runSetup() {
         _ = handleSetup()
-    }
-
-    @objc private func copyUpgradeCommand() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("brew upgrade agentpong && brew services restart agentpong", forType: .string)
-
-        let alert = NSAlert()
-        alert.messageText = "Upgrade command copied"
-        alert.informativeText = "Paste in terminal:\nbrew upgrade agentpong && brew services restart agentpong"
-        alert.addButton(withTitle: "OK")
-        alert.alertStyle = .informational
-        alert.runModal()
-    }
-
-    /// Check `brew info agentpong` for a newer version in the background.
-    private func checkBrewUpdate() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let brewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
-            guard let brewPath = brewPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return }
-
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: brewPath)
-            task.arguments = ["info", "--json=v2", "agentpong"]
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = FileHandle.nullDevice
-
-            do {
-                try task.run()
-                task.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let formulae = json["formulae"] as? [[String: Any]],
-                   let formula = formulae.first,
-                   let versions = formula["versions"] as? [String: Any],
-                   let stable = versions["stable"] as? String,
-                   stable != AppVersion.display {
-                    DispatchQueue.main.async {
-                        self?.updateAvailable = stable
-                    }
-                }
-            } catch {}
-        }
     }
 
     @objc private func quitApp() {
