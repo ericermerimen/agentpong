@@ -130,6 +130,9 @@ PLIST
 # Write PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
+# Add rpath for embedded frameworks (Sparkle needs this)
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+
 # Codesign if requested
 if [ "$SIGN" = "sign" ]; then
     echo "Signing..."
