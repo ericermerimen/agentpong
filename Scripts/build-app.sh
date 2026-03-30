@@ -67,11 +67,23 @@ if [ -f "Resources/AppIcon.icns" ]; then
 fi
 
 # Embed Sparkle.framework for auto-updates
-SPARKLE_FW=".build/${CONFIG}/Sparkle.framework"
-if [ -d "$SPARKLE_FW" ]; then
+# SPM puts frameworks in .build/arm64-apple-macosx/{config}/ or .build/{config}/
+SPARKLE_FW=""
+for candidate in \
+    ".build/arm64-apple-macosx/${CONFIG}/Sparkle.framework" \
+    ".build/${CONFIG}/Sparkle.framework" \
+    ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"; do
+    if [ -d "$candidate" ]; then
+        SPARKLE_FW="$candidate"
+        break
+    fi
+done
+if [ -n "$SPARKLE_FW" ]; then
     mkdir -p "$APP_BUNDLE/Contents/Frameworks"
     cp -R "$SPARKLE_FW" "$APP_BUNDLE/Contents/Frameworks/"
-    echo "Embedded Sparkle.framework"
+    echo "Embedded Sparkle.framework from $SPARKLE_FW"
+else
+    echo "WARNING: Sparkle.framework not found, auto-updates will not work"
 fi
 
 # Generate Info.plist
