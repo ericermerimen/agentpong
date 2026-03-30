@@ -20,8 +20,8 @@
         url="https://github.com/ericermerimen/agentpong/releases/download/v1.2.0/AgentPong-v1.2.0-macos.tar.gz"
         sparkle:version="1.2.0"
         sparkle:shortVersionString="1.2.0"
-        sparkle:edSignature="REPLACE_WITH_ED_SIGNATURE"
-        length="0"
+        sparkle:edSignature="+UgM6ODQB8EhN00tAYZDa7TpEtn7lcvgbBVnmx3+0u6sCsrgyiCz8lfpu0Lq6F7i5IJVsMqmIPZlWAhgdJAYCw=="
+        length="2711142"
         type="application/octet-stream"
       />
     </item>
