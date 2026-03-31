@@ -132,57 +132,51 @@ jobs:
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/ericermerimen/homebrew-tap.git" /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
-          mkdir -p Formula
+          mkdir -p Casks
 
-          cat > Formula/agentpong.rb << FORMULA
-          class Agentpong < Formula
-            desc "Pixel art room with husky pet that monitors Claude Code sessions"
-            homepage "https://github.com/ericermerimen/agentpong"
-            url "${URL}"
+          cat > Casks/agentpong.rb << CASK
+          cask "agentpong" do
+            version "${VERSION_NUM}"
             sha256 "${SHA}"
 
-            depends_on :macos
-            depends_on macos: :sonoma
+            url "${URL}"
+            name "AgentPong"
+            desc "Pixel art room with husky pet that monitors Claude Code sessions"
+            homepage "https://github.com/ericermerimen/agentpong"
 
-            def install
-              prefix.install "AgentPong.app"
-              bin.install_symlink prefix/"AgentPong.app/Contents/MacOS/AgentPong" => "agentpong"
+            depends_on macos: ">= :sonoma"
+
+            app "AgentPong.app"
+            binary "#{appdir}/AgentPong.app/Contents/MacOS/AgentPong", target: "agentpong"
+
+            postflight do
+              system "pkill", "-x", "AgentPong"
             end
 
-            def caveats
-              <<~EOS
-                Start AgentPong and auto-launch on login:
+            caveats <<~EOS
+              After install:
+                1. Open AgentPong from Applications
+                2. Run \`agentpong setup\` to configure Claude Code hooks
 
-                  brew services start agentpong
-
-                Setup Claude Code hooks:
-
-                  agentpong setup
-
-                After future upgrades:
-
-                  brew upgrade agentpong && brew services restart agentpong
-              EOS
-            end
-
-            def post_install
-              quiet_system "pkill", "-x", "AgentPong"
-              quiet_system "rm", "-rf", "/Applications/AgentPong.app"
-              quiet_system "cp", "-R", "#{opt_prefix}/AgentPong.app", "/Applications/AgentPong.app"
-            end
-
-            service do
-              run [opt_prefix/"AgentPong.app/Contents/MacOS/AgentPong"]
-              keep_alive true
-              log_path var/"log/agentpong.log"
-              error_log_path var/"log/agentpong-error.log"
-            end
+              AgentPong updates automatically via Sparkle.
+            EOS
           end
-          FORMULA
+          CASK
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/agentpong.rb
+          git add Casks/agentpong.rb
           git commit -m "Update agentpong to ${VERSION}" || true
-          git pull --rebase origin main || true
-          git push origin main
+
+          for attempt in 1 2 3; do
+            if git push origin main; then
+              echo "==> Homebrew tap push succeeded (attempt $attempt)"
+              break
+            fi
+            echo "==> Push failed (attempt $attempt), pulling with rebase..."
+            git pull --rebase origin main || true
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: Failed to push to homebrew-tap after 3 attempts"
+              exit 1
+            fi
+          done
