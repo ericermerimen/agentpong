@@ -59,7 +59,8 @@ public final class SessionWriter {
             session.status = .running
             if let cwd = cwd {
                 session.cwd = cwd
-                session.name = (cwd as NSString).lastPathComponent
+                let dirName = (cwd as NSString).lastPathComponent
+                session.name = (cwd == NSHomeDirectory()) ? "~" : dirName
             }
         case "stop":
             session.status = .done
@@ -86,7 +87,8 @@ public final class SessionWriter {
         if let cwd = cwd {
             session.cwd = cwd
             if session.name == nil {
-                session.name = (cwd as NSString).lastPathComponent
+                let dirName = (cwd as NSString).lastPathComponent
+                session.name = (cwd == NSHomeDirectory()) ? "~" : dirName
             }
         }
         if let pid = pid {

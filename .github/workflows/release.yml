@@ -25,10 +25,12 @@ jobs:
           cp LICENSE pkg/ 2>/dev/null || true
           tar -czf "AgentPong-${VERSION}-macos.tar.gz" -C pkg AgentPong.app LICENSE
 
-      - name: Compute SHA256
+      - name: Compute SHA256 and file size
         id: sha
         run: |
-          echo "app_sha=$(shasum -a 256 AgentPong-${{ github.ref_name }}-macos.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          TARBALL="AgentPong-${{ github.ref_name }}-macos.tar.gz"
+          echo "app_sha=$(shasum -a 256 "$TARBALL" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "app_size=$(stat -f%z "$TARBALL")" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -57,6 +59,66 @@ jobs:
 
             ## SHA256
             - `AgentPong-${{ github.ref_name }}-macos.tar.gz`: `${{ steps.sha.outputs.app_sha }}`
+
+      - name: Update appcast.xml for Sparkle
+        if: "!contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc')"
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_NUM="${VERSION#v}"
+          SIZE="${{ steps.sha.outputs.app_size }}"
+          URL="https://github.com/ericermerimen/agentpong/releases/download/${VERSION}/AgentPong-${VERSION}-macos.tar.gz"
+          PUB_DATE="$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+
+          # Generate EdDSA signature if key is available
+          ED_SIG=""
+          if [ -f ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/bin/sign_update" ]; then
+            ED_SIG=$(.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/bin/sign_update "AgentPong-${VERSION}-macos.tar.gz" 2>/dev/null || echo "")
+          fi
+          ED_ATTR=""
+          if [ -n "$ED_SIG" ]; then
+            ED_ATTR="sparkle:edSignature=\"${ED_SIG}\""
+          fi
+
+          # Switch to main so we modify the latest appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+
+          # Use python3 to reliably insert the new item before </channel>
+          python3 -c "
+          version_num = '${VERSION_NUM}'
+          url = '${URL}'
+          size = '${SIZE}'
+          pub_date = '${PUB_DATE}'
+          ed_attr = '${ED_ATTR}'
+
+          new_item = '''    <item>
+            <title>Version {}</title>
+            <pubDate>{}</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure
+              url=\"{}\"
+              sparkle:version=\"{}\"
+              sparkle:shortVersionString=\"{}\"
+              {}
+              length=\"{}\"
+              type=\"application/octet-stream\"
+            />
+          </item>'''.format(version_num, pub_date, url, version_num, version_num, ed_attr, size)
+
+          with open('site/appcast.xml', 'r') as f:
+              content = f.read()
+
+          content = content.replace('  </channel>', new_item + '\n\n  </channel>')
+
+          with open('site/appcast.xml', 'w') as f:
+              f.write(content)
+          "
+
+          git add site/appcast.xml
+          git commit -m "Update appcast.xml for ${VERSION}"
+          git push origin main
 
       - name: Update Homebrew tap formula
         env:
@@ -122,4 +184,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/agentpong.rb
           git commit -m "Update agentpong to ${VERSION}" || true
-          git push
+          git pull --rebase origin main || true
+          git push origin main

@@ -80,6 +80,9 @@ public struct Session: Codable, Identifiable, Equatable {
             return name
         }
         if let cwd = cwd {
+            if cwd == NSHomeDirectory() {
+                return "~"
+            }
             return (cwd as NSString).lastPathComponent
         }
         return String(id.prefix(8))
