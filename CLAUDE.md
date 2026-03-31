@@ -94,7 +94,7 @@ Permission bubbles appear on yellow screen with Allow/Deny buttons.
   "id": "session-uuid",
   "status": "running|idle|done|needsInput|error|unavailable",
   "name": "project-name",
-  "cwd": "/path/to/project",
+  "cwd": "/path/to/project",          // display name: last path component, or "~" if home dir
   "app": "VSCode",
   "pid": 12345,
   "taskDescription": "Fixing the login bug",
@@ -136,6 +136,14 @@ swift build -c release   # Release build
 swift run AgentPong      # Run the app
 swift test               # Run tests (15 passing)
 ```
+
+## CI / Release
+
+- Tag-triggered release workflow (`.github/workflows/release.yml`)
+- Builds `.app` bundle + `.tar.gz` archive for Homebrew
+- Auto-generates `appcast.xml` for Sparkle auto-updates (Ed25519 signed)
+- Pushes updated Homebrew formula to `homebrew-tap` repo with retry+rebase for race conditions
+- Version source of truth: `VERSION` file (also hardcoded fallback in `Sources/Shared/Version.swift`)
 
 ## Hard rules (non-negotiable)
 

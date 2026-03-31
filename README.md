@@ -12,7 +12,7 @@ A cozy pixel art desktop pet for Claude Code. A husky lives in a tiny office on 
 
 ## Features
 
-- **Reactive monitors** -- 3 screens glow green/yellow/red based on Claude Code session status
+- **Reactive monitors** -- 3 screens glow green/yellow/red based on Claude Code session status (shows `~` for home directory)
 - **Click to jump** -- click a monitor to switch to that terminal session
 - **Permission approval** -- approve/deny Claude Code tool use directly from the widget
 - **Husky pet** -- 12+ behaviors: wander, sit, sleep, play, drink, zoomies, watch your cursor
@@ -114,6 +114,8 @@ Always in the room. Picks behaviors by weighted random, interrupted by screen ev
 - **Scare** -- sprints to far corner if you click it 3 times
 
 ## Updating
+
+AgentPong checks for updates automatically via Sparkle. When a new version is available, you'll get a prompt to update in-app.
 
 ```bash
 # Homebrew
