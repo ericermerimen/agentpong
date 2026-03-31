@@ -76,13 +76,14 @@ public struct Session: Codable, Identifiable, Equatable {
 
     /// Display name for the session
     public var displayName: String {
+        // Check cwd first -- if it's home dir, always show "~" regardless of stored name
+        if let cwd = cwd, cwd == NSHomeDirectory() {
+            return "~"
+        }
         if let name = name, !name.isEmpty {
             return name
         }
         if let cwd = cwd {
-            if cwd == NSHomeDirectory() {
-                return "~"
-            }
             return (cwd as NSString).lastPathComponent
         }
         return String(id.prefix(8))
