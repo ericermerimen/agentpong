@@ -40,5 +40,19 @@
   />
 </item>
 
+    <item>
+  <title>Version 1.2.3</title>
+  <pubDate>Tue, 31 Mar 2026 02:11:55 +0000</pubDate>
+  <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+  <enclosure
+    url="https://github.com/ericermerimen/agentpong/releases/download/v1.2.3/AgentPong-v1.2.3-macos.tar.gz"
+    sparkle:version="1.2.3"
+    sparkle:shortVersionString="1.2.3"
+    
+    length="2709996"
+    type="application/octet-stream"
+  />
+</item>
+
   </channel>
 </rss>
