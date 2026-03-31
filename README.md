@@ -25,13 +25,11 @@ A cozy pixel art desktop pet for Claude Code. A husky lives in a tiny office on 
 ### Homebrew (recommended)
 
 ```bash
-brew tap ericermerimen/tap
-brew install agentpong
-brew services start agentpong   # Launch now + auto-start on login
-agentpong setup                 # Configure Claude Code hooks
+brew install --cask ericermerimen/tap/agentpong
+agentpong setup   # Configure Claude Code hooks
 ```
 
-Restart any running Claude Code sessions for hooks to take effect.
+Open AgentPong from `/Applications/` and enable "Launch at Login" from the app's menu. Restart any running Claude Code sessions for hooks to take effect.
 
 **Or paste this into any Claude Code session:**
 
@@ -119,7 +117,7 @@ AgentPong checks for updates automatically via Sparkle. When a new version is av
 
 ```bash
 # Homebrew
-brew upgrade agentpong   # auto-restarts if using brew services
+brew upgrade --cask agentpong
 
 # From source
 git pull && make install
@@ -130,8 +128,7 @@ pkill -x AgentPong && open /Applications/AgentPong.app
 
 ```bash
 # Homebrew
-brew services stop agentpong
-brew uninstall agentpong
+brew uninstall --cask agentpong
 rm -rf ~/.agentpong
 
 # From source

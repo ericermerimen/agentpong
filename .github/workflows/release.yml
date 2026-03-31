@@ -44,9 +44,7 @@ jobs:
 
             **Homebrew (recommended):**
             ```bash
-            brew tap ericermerimen/tap
-            brew install agentpong
-            brew services start agentpong
+            brew install --cask ericermerimen/tap/agentpong
             agentpong setup
             ```
 
@@ -120,7 +118,7 @@ jobs:
           git commit -m "Update appcast.xml for ${VERSION}"
           git push origin main
 
-      - name: Update Homebrew tap formula
+      - name: Update Homebrew tap cask
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         if: env.TAP_TOKEN != '' && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-rc')

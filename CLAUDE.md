@@ -142,7 +142,7 @@ swift test               # Run tests (15 passing)
 - Tag-triggered release workflow (`.github/workflows/release.yml`)
 - Builds `.app` bundle + `.tar.gz` archive for Homebrew
 - Auto-generates `appcast.xml` for Sparkle auto-updates (Ed25519 signed)
-- Pushes updated Homebrew formula to `homebrew-tap` repo with retry+rebase for race conditions
+- Pushes updated Homebrew cask to `homebrew-tap` repo with retry+rebase for race conditions
 - Version source of truth: `VERSION` file (also hardcoded fallback in `Sources/Shared/Version.swift`)
 
 ## Hard rules (non-negotiable)

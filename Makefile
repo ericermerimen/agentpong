@@ -56,7 +56,7 @@ uninstall: unlink
 	rm -rf ~/.agentpong
 	@echo "Uninstalled. Remove AgentPong hooks from ~/.claude/settings.json manually."
 
-# Create release archive (for Homebrew formula)
+# Create release archive (for Homebrew cask)
 # Uses --no-mac-metadata to avoid macOS extended attributes in the tarball.
 # Homebrew auto-strips one directory level on extraction, so we put
 # AgentPong.app at the root of a wrapper directory.

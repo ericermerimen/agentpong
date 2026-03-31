@@ -51,8 +51,8 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # NOTE: Do NOT create a lowercase "agentpong" symlink here.
 # macOS APFS is case-insensitive -- "agentpong" and "AgentPong" are the
 # same file, so ln -sf would replace the binary with a broken symlink.
-# The Homebrew formula creates the CLI symlink externally via:
-#   bin.install_symlink prefix/"AgentPong.app/Contents/MacOS/AgentPong" => "agentpong"
+# The Homebrew cask creates the CLI symlink externally via:
+#   binary "#{appdir}/AgentPong.app/Contents/MacOS/AgentPong", target: "agentpong"
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Verify binary was actually copied

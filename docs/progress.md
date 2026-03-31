@@ -4,7 +4,7 @@ Last updated: 2026-03-18 (v1.0.0 ship review)
 
 ## Current State
 
-**v1.0.0 -- feature complete.** App builds and runs. Floating borderless window with Gemini room background, triple monitors with decorative textures, husky pet with 12+ behaviors, real-time hook events, click-to-jump, permission approval, info overlay. Homebrew formula, build script, and README ready.
+**v1.0.0 -- feature complete.** App builds and runs. Floating borderless window with Gemini room background, triple monitors with decorative textures, husky pet with 12+ behaviors, real-time hook events, click-to-jump, permission approval, info overlay. Homebrew cask, build script, and README ready.
 
 ### What works
 
@@ -30,7 +30,7 @@ Last updated: 2026-03-18 (v1.0.0 ship review)
 - 15 tests passing (Session, SessionWriter/Reader, ZoneManager, HookEvent, HookServer)
 - Build script (Scripts/build-app.sh) creates .app bundle from SPM
 - Makefile: build, app, install, archive, clean
-- Homebrew formula template (Formula/agentpong.rb)
+- Homebrew cask definition (Casks/agentpong.rb in homebrew-tap)
 
 ## Phase Status
 
@@ -90,7 +90,7 @@ Last updated: 2026-03-18 (v1.0.0 ship review)
 - [x] jq fallback in hook-sender.sh
 - [x] Build script (Scripts/build-app.sh)
 - [x] Makefile (build, app, install, archive, clean)
-- [x] Homebrew formula template
+- [x] Homebrew cask
 - [x] README.md
 
 ## Future Ideas (not planned)
@@ -132,7 +132,7 @@ These are deferred ideas that may or may not happen. None are needed for v1.
 | Sources/Shared/Version.swift | App version constant |
 | Scripts/hook-sender.sh | stdin->curl bridge for Claude Code hooks |
 | Scripts/build-app.sh | Build .app bundle from SPM |
-| Formula/agentpong.rb | Homebrew formula template |
+| Formula/agentpong.rb | Homebrew formula (deprecated -- now cask in homebrew-tap) |
 
 ## Data Locations
 
