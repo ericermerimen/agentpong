@@ -24,30 +24,31 @@ AgentPong is a macOS app that displays a cozy pixel art room with a husky pet an
 AgentPong/
 ├── Sources/
 │   ├── App/
-│   │   └── AgentPongApp.swift            # @main, window, menu bar, CLI, HookServer startup
+│   │   └── AgentPongApp.swift            # @main entry. Preserve window, menu bar, CLI, and HookServer startup order.
 │   │
 │   ├── SpriteEngine/
-│   │   ├── OfficeScene.swift             # SKScene, 60fps loop, screen management, click handlers
+│   │   ├── OfficeScene.swift             # SKScene 60fps loop. Keep update() non-blocking.
 │   │   ├── Nodes/
-│   │   │   ├── ScreenNode.swift          # Monitor with color states, count, glow, click target
-│   │   │   ├── HuskyNode.swift           # Pet sprite + behaviors + screen reactions
-│   │   │   ├── BubbleNode.swift          # Permission/info bubbles on screens
-│   │   │   └── AmbientNode.swift         # Plants, lamp, decorative
-│   │   └── ZoneManager.swift             # Screen positions, pet wander bounds
+│   │   │   ├── ScreenNode.swift          # Preserve color state enum and glow animation contract.
+│   │   │   ├── HuskyNode.swift           # Preserve behavior state machine transitions.
+│   │   │   ├── BubbleNode.swift          # Permission/info bubbles on screens.
+│   │   │   └── AmbientNode.swift         # Plants, lamp, decorative.
+│   │   └── ZoneManager.swift             # Preserve screen positions and pet wander bounds.
 │   │
 │   └── Shared/
-│       ├── Session.swift                 # Codable model
-│       ├── SessionReader.swift           # Reads ~/.agentpong/sessions/
-│       ├── SessionWriter.swift           # Writes session JSON
-│       ├── HookServer.swift              # Local HTTP server for real-time hook events
-│       ├── HookEvent.swift               # Hook event model + permission decisions
-│       ├── WindowJumper.swift            # Activate session terminal window (from AgentsHub)
-│       └── SpriteAssetLoader.swift       # Load sprites, placeholder fallback
+│       ├── Session.swift                 # Codable model. Preserve all fields for JSON compat.
+│       ├── SessionReader.swift           # Read-only access to ~/.agentpong/sessions/.
+│       ├── SessionWriter.swift           # Writes session JSON.
+│       ├── HookServer.swift              # Keep NWListener on loopback only.
+│       ├── HookEvent.swift               # Hook event model + permission decisions.
+│       ├── WindowJumper.swift            # Activate session terminal window.
+│       ├── Version.swift                 # Fallback version. Keep in sync with VERSION file.
+│       └── SpriteAssetLoader.swift       # Load sprites. Preserve placeholder fallback path.
 │
 ├── Scripts/
-│   └── hook-sender.sh                    # stdin→curl bridge for Claude Code hooks
+│   └── hook-sender.sh                    # Keep compatible with both bash and zsh.
 └── Tests/
-    └── SharedTests/                      # Session, HookEvent, HookServer, ZoneManager tests
+    └── SharedTests/                      # Session, HookEvent, HookServer, ZoneManager tests.
 ```
 
 ## Data flow
@@ -178,6 +179,26 @@ Do not present half-baked solutions. Think deeply before implementing:
 - **When stuck on a bug, stop speculating and gather real information first**
 - If a root cause isn't obvious from reading the code, add logging/instrumentation and ask the user to run it -- don't keep re-theorising without data
 - Avoid the "wait, actually the real issue is..." loop: form one clear hypothesis, test it, then reassess based on evidence
+
+## Constraints
+
+- Do not break the SpriteKit 60fps loop with blocking calls. All I/O in `OfficeScene.update()` must be async or deferred.
+- Home dir display: always check `cwd` against `NSHomeDirectory()` before using a stored display name. Do not trust the stored name alone.
+- `Version.swift` fallback must match the `VERSION` file. If you change one, change both.
+- Do not access AgentPing session files (`~/.agentping/sessions/`) with write -- read-only fallback only.
+- Keep `hook-sender.sh` compatible with both bash and zsh. No bashisms that break under `/bin/sh` or zsh.
+- Sparkle appcast URL must point to GitHub Pages (`ericermerimen.github.io/agentpong/appcast.xml`). Do not change this.
+
+## Diagnostic heuristics
+
+- **"AgentPong is damaged" dialog**: Gatekeeper quarantine. Run `xattr -cr AgentPong.app`, not a code bug.
+- **Shows fewer sessions than AgentPing**: Expected. Different detection models (hook-driven vs polling). Not a bug.
+- **Sparkle "up to date" showing old version**: `appcast.xml` not redeployed to GitHub Pages. Not a version comparison bug. Redeploy the appcast.
+
+## Data dependencies
+
+- If you change `Version.swift`, also update the `VERSION` file (and vice versa).
+- If you add a release tag, CI auto-generates `appcast.xml` -- do not manually edit the deployed appcast.
 
 ## Plan
 
